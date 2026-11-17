@@ -7,7 +7,7 @@ import {
   getCurrentUserPermissions,
 } from "@/lib/current-user";
 
-type QuickRange = "today" | "yesterday" | "7d" | "30d" | "custom";
+type QuickRange = "latest" | "today" | "yesterday" | "7d" | "30d" | "custom";
 type ActionScope = "selected" | "filtered" | "all";
 type ShippingFeePayer = "SHOP" | "CUSTOMER";
 
@@ -16,32 +16,32 @@ function currency(n: number) {
 }
 
 function toDateInput(d: Date) {
-  return d.toISOString().slice(0, 10);
+  // Lấy ngày theo giờ Việt Nam, không dùng UTC/toISOString (dễ lùi một ngày).
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value || "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
 function getRange(type: QuickRange) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Lấy ngày hiện tại ở Việt Nam, không phụ thuộc timezone của trình duyệt.
+  const todayText = toDateInput(new Date());
+  const [year, month, day] = todayText.split("-").map(Number);
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  const shifted = (offset: number) => {
+    const date = new Date(calendarDate);
+    date.setUTCDate(date.getUTCDate() + offset);
+    return date.toISOString().slice(0, 10);
+  };
 
-  if (type === "yesterday") {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 1);
-    return { from: toDateInput(d), to: toDateInput(d) };
-  }
-
-  if (type === "7d") {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 6);
-    return { from: toDateInput(d), to: toDateInput(today) };
-  }
-
-  if (type === "30d") {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 29);
-    return { from: toDateInput(d), to: toDateInput(today) };
-  }
-
-  return { from: toDateInput(today), to: toDateInput(today) };
+  if (type === "yesterday") return { from: shifted(-1), to: shifted(-1) };
+  if (type === "7d") return { from: shifted(-6), to: todayText };
+  if (type === "30d") return { from: shifted(-29), to: todayText };
+  return { from: todayText, to: todayText };
 }
 
 function formatDateTime(value?: string | Date | null) {
@@ -289,10 +289,10 @@ export default function LocalDeliveryReconciliationPage() {
     currentPermissions.includes("*") ||
     currentPermissions.includes("finance.view");
 
-  const initialRange = useMemo(() => getRange("today"), []);
-  const [quickRange, setQuickRange] = useState<QuickRange>("today");
-  const [dateFrom, setDateFrom] = useState(initialRange.from);
-  const [dateTo, setDateTo] = useState(initialRange.to);
+  // Mặc định không giới hạn ngày: API trả tối đa 50 đơn mới nhất.
+  const [quickRange, setQuickRange] = useState<QuickRange>("latest");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [branchId, setBranchId] = useState("ALL");
   const [carrier, setCarrier] = useState("ALL");
   const [status, setStatus] = useState("ALL");
@@ -322,6 +322,11 @@ export default function LocalDeliveryReconciliationPage() {
 
   const applyQuickRange = (range: QuickRange) => {
     setQuickRange(range);
+    if (range === "latest") {
+      setDateFrom("");
+      setDateTo("");
+      return;
+    }
     if (range === "custom") return;
     const next = getRange(range);
     setDateFrom(next.from);
@@ -812,6 +817,7 @@ export default function LocalDeliveryReconciliationPage() {
             <p className="mb-2 text-xs font-medium text-neutral-500">Khoảng thời gian</p>
             <div className="flex flex-wrap gap-2">
               {[
+                ["latest", "50 đơn mới nhất"],
                 ["today", "Hôm nay"],
                 ["yesterday", "Hôm qua"],
                 ["7d", "7 ngày"],
@@ -1018,7 +1024,9 @@ export default function LocalDeliveryReconciliationPage() {
           <div>
             <h2 className="text-lg font-semibold text-neutral-950">Danh sách đối soát nội thành</h2>
             <p className="mt-1 text-sm text-neutral-500">
-              Click mã đơn để mở chi tiết. Bảng đã bổ sung thời gian, trạng thái đơn, trạng thái thanh toán và trạng thái đối soát.
+              {quickRange === "latest" && !dateFrom && !dateTo
+                ? "Mặc định hiển thị 50 đơn mới nhất, không giới hạn ngày. Chọn bộ lọc thời gian để xem đơn các ngày khác."
+                : "Đang lọc theo điều kiện đã chọn. Click mã đơn để mở chi tiết."}
             </p>
           </div>
           <button
