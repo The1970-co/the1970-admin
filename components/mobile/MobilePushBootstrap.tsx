@@ -4,119 +4,144 @@ import { API_BASE } from "@/lib/api-base";
 import { getMobileToken } from "@/lib/mobile-auth-token";
 import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
 function rememberDebug(message: string, extra?: unknown) {
   if (typeof window === "undefined") return;
-
   try {
-    const line = `[${new Date().toISOString()}] ${message}${
-      extra ? ` ${JSON.stringify(extra)}` : ""
-    }`;
-    console.info("[MobilePush]", message, extra || "");
+    const line = `[${new Date().toISOString()}] ${message}${extra ? ` ${JSON.stringify(extra)}` : ""}`;
+    console.info("[MobilePush]", message, extra ?? "");
     localStorage.setItem("the1970_mobile_push_debug", line);
   } catch {
-    // ignore debug storage errors
+    // Debug logging must never prevent registration.
   }
-}
-
-async function savePushToken(token: string) {
-  if (!token) {
-    rememberDebug("skip register: empty APNs token");
-    return;
-  }
-
-  const accessToken = await getMobileToken();
-
-  if (!accessToken) {
-    rememberDebug("skip register: missing auth token");
-    return;
-  }
-
-  const response = await fetch(`${API_BASE}/mobile/push/register`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
-      platform: "ios",
-      provider: "apns",
-      token,
-    }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    rememberDebug("register failed", {
-      status: response.status,
-      body: text.slice(0, 300),
-    });
-    return;
-  }
-
-  rememberDebug("register success", { status: response.status });
 }
 
 export default function MobilePushBootstrap() {
-  const startedRef = useRef(false);
-
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    if (!Capacitor.isNativePlatform()) return;
 
-    if (!Capacitor.isNativePlatform()) {
-      rememberDebug("skip: not native platform");
-      return;
-    }
+    let disposed = false;
+    let apnsToken = "";
+    let synced = false;
+    let sending = false;
+    let registering = false;
+    let lastRegisterAt = 0;
+    const listeners: Array<{ remove: () => Promise<void> }> = [];
 
-    let active = true;
+    async function syncToServer(force = false) {
+      if (disposed || !apnsToken || sending || (synced && !force)) return;
+      const jwt = await getMobileToken();
+      if (disposed) return;
+      if (!jwt) {
+        rememberDebug("APNs token pending: waiting for login", { suffix: apnsToken.slice(-6) });
+        return;
+      }
 
-    async function setupPush() {
+      sending = true;
       try {
-        rememberDebug("setup start", { platform: Capacitor.getPlatform() });
-
-        await PushNotifications.removeAllListeners();
-
-        await PushNotifications.addListener("registration", async (token) => {
-          rememberDebug("registration token received", {
-            tokenLength: token.value?.length || 0,
-          });
-          await savePushToken(token.value);
+        const response = await fetch(`${API_BASE}/mobile/push/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ platform: "ios", provider: "apns", token: apnsToken }),
         });
-
-        await PushNotifications.addListener("registrationError", (error) => {
-          rememberDebug("registration error", error);
-        });
-
-        await PushNotifications.addListener("pushNotificationActionPerformed", (event) => {
-          const data = event.notification.data || {};
-          const orderId = data.orderId || data.order_id;
-
-          if (orderId) {
-            window.location.href = `/mobile/orders/${orderId}`;
-            return;
-          }
-
-          window.location.href = "/mobile";
-        });
-
-        const permission = await PushNotifications.requestPermissions();
-        rememberDebug("permission result", permission);
-
-        if (!active || permission.receive !== "granted") return;
-
-        await PushNotifications.register();
-        rememberDebug("register called");
+        if (!response.ok) {
+          synced = false;
+          rememberDebug("push register failed", { status: response.status, suffix: apnsToken.slice(-6) });
+          return;
+        }
+        synced = true;
+        rememberDebug("push register success", { suffix: apnsToken.slice(-6), status: response.status });
       } catch (error) {
-        rememberDebug("setup failed", error);
+        synced = false;
+        rememberDebug("push register network error", String(error));
+      } finally {
+        sending = false;
       }
     }
 
-    void setupPush();
+    async function requestNativeToken() {
+      if (disposed || registering || Date.now() - lastRegisterAt < 10000) return;
+      registering = true;
+      lastRegisterAt = Date.now();
+      try {
+        const permission = await PushNotifications.checkPermissions();
+        if (permission.receive !== "granted") {
+          rememberDebug("push permission not granted", permission);
+          return;
+        }
+        await PushNotifications.register();
+        rememberDebug("APNs register requested");
+      } catch (error) {
+        rememberDebug("APNs register failed", String(error));
+      } finally {
+        registering = false;
+      }
+    }
+
+    async function setup() {
+      try {
+        // Do not removeAllListeners: other parts of the app may own their listeners.
+        listeners.push(await PushNotifications.addListener("registration", ({ value }) => {
+          if (disposed) return;
+          if (apnsToken !== value) synced = false;
+          apnsToken = value || "";
+          rememberDebug("APNs token received", { suffix: apnsToken.slice(-6), length: apnsToken.length });
+          void syncToServer();
+        }));
+        listeners.push(await PushNotifications.addListener("registrationError", error => {
+          rememberDebug("APNs registration error", error);
+        }));
+        listeners.push(await PushNotifications.addListener("pushNotificationActionPerformed", event => {
+          const data = event.notification.data || {};
+          const orderId = data.orderId || data.order_id;
+          if (orderId) window.location.href = `/mobile/orders/${encodeURIComponent(String(orderId))}`;
+          else if (data.type === "business_report" && (data.kind === "product" || data.kind === "product_test")) {
+            const day = /^\d{4}-\d{2}-\d{2}$/.test(String(data.day || "")) ? `?day=${encodeURIComponent(String(data.day))}` : "";
+            window.location.href = `/mobile/reports/products${day}`;
+          }
+          else if (data.type === "business_report") window.location.href = "/mobile/reports/overview";
+          else window.location.href = "/mobile";
+        }));
+
+        let permission = await PushNotifications.checkPermissions();
+        if (permission.receive === "prompt" || permission.receive === "prompt-with-rationale") {
+          permission = await PushNotifications.requestPermissions();
+        }
+        rememberDebug("push permission", permission);
+        if (!disposed && permission.receive === "granted") await requestNativeToken();
+      } catch (error) {
+        rememberDebug("push bootstrap failed", String(error));
+      }
+    }
+
+    const onResume = () => {
+      if (disposed) return;
+      // Reassign the token to whichever account is currently logged in.
+      if (apnsToken) void syncToServer(true);
+      else void requestNativeToken();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") onResume();
+    };
+    window.addEventListener("focus", onResume);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // If APNs registration happens before JWT is stored, retry after login.
+    const retry = window.setInterval(() => {
+      if (disposed || document.visibilityState !== "visible") return;
+      if (apnsToken) void syncToServer();
+      else void requestNativeToken();
+    }, 15000);
+
+    void setup();
 
     return () => {
-      active = false;
+      disposed = true;
+      window.clearInterval(retry);
+      window.removeEventListener("focus", onResume);
+      document.removeEventListener("visibilitychange", onVisibility);
+      listeners.forEach(listener => { void listener.remove(); });
     };
   }, []);
 
