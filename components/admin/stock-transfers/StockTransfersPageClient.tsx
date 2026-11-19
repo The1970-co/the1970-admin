@@ -565,6 +565,8 @@ export default function StockTransfersPageClient() {
   const [salesVelocityDays, setSalesVelocityDays] = useState(14);
   const [minSoldQty, setMinSoldQty] = useState(0);
   const [autoEnabled, setAutoEnabled] = useState(false);
+  const [savedAutoEnabled, setSavedAutoEnabled] = useState(false);
+  const [savedAutoMode, setSavedAutoMode] = useState<"CLASSIC" | "POS_YESTERDAY">("CLASSIC");
   const [autoMode, setAutoMode] = useState<"CLASSIC" | "POS_YESTERDAY">("CLASSIC");
   const [posPreview, setPosPreview] = useState<any>(null);
   const [posLoading, setPosLoading] = useState(false);
@@ -1612,6 +1614,7 @@ export default function StockTransfersPageClient() {
       const data = await res.json();
 
       setAutoEnabled(Boolean(data.isEnabled));
+      setSavedAutoEnabled(Boolean(data.isEnabled));
       setRunHour(Number(data.runHour ?? 9));
       setRunMinute(Number(data.runMinute ?? 0));
       setMaxPerVariant(Number(data.maxPerVariant ?? 5));
@@ -1624,6 +1627,7 @@ export default function StockTransfersPageClient() {
 
       if (Array.isArray(data.categoryNames)) {
         setAutoMode(data.categoryNames.includes("__POS_YESTERDAY__") ? "POS_YESTERDAY" : "CLASSIC");
+        setSavedAutoMode(data.categoryNames.includes("__POS_YESTERDAY__") ? "POS_YESTERDAY" : "CLASSIC");
         setSelectedCategoryNames(data.categoryNames.filter((item: string) => item !== "__POS_YESTERDAY__"));
         setSelectedCategoryGroupMap({
           summer: data.categoryNames.filter((item: string) => item !== "__POS_YESTERDAY__"),
@@ -2348,7 +2352,9 @@ export default function StockTransfersPageClient() {
         throw new Error(data?.message || "Không lưu được cấu hình tự động.");
       }
 
-      setNotice("Đã lưu cấu hình Auto Rebalance.");
+      setSavedAutoEnabled(autoEnabled);
+      setSavedAutoMode(autoMode);
+      setNotice(autoEnabled ? "Đã lưu và bật lịch quét tự động." : "Đã lưu cấu hình, lịch tự động đang tắt.");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Không lưu được cấu hình tự động.",
@@ -2779,6 +2785,9 @@ export default function StockTransfersPageClient() {
                 {autoConfigOpen ? "Thu gọn ▲" : "Mở cấu hình ▼"}
               </button>
 
+              <span className={`inline-flex items-center rounded-xl border px-3 py-2 text-xs font-semibold ${autoEnabled !== savedAutoEnabled || autoMode !== savedAutoMode ? "border-amber-300 bg-amber-50 text-amber-800" : savedAutoEnabled ? "border-emerald-300 bg-emerald-100 text-emerald-800" : "border-neutral-200 bg-neutral-100 text-neutral-600"}`}>
+                {autoEnabled !== savedAutoEnabled || autoMode !== savedAutoMode ? "● Có thay đổi chưa lưu" : savedAutoEnabled ? `● AUTO ĐANG BẬT · ${savedAutoMode === "POS_YESTERDAY" ? "POS hôm qua" : "Bù tồn cũ"}` : "○ AUTO ĐANG TẮT"}
+              </span>
               <button
                 type="button"
                 onClick={() => void handleSaveAutoConfig()}
@@ -2943,11 +2952,12 @@ export default function StockTransfersPageClient() {
                     <select
                       value={autoEnabled ? "on" : "off"}
                       onChange={(e) => setAutoEnabled(e.target.value === "on")}
-                      className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+                      className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm font-semibold outline-none focus:ring-2 ${autoEnabled ? "border-emerald-400 bg-emerald-100 text-emerald-900 focus:ring-emerald-200" : "border-neutral-300 bg-neutral-100 text-neutral-700 focus:ring-neutral-200"}`}
                     >
                       <option value="off">Tắt</option>
                       <option value="on">Bật</option>
                     </select>
+                    <span className="mt-1 block text-[11px] font-normal text-neutral-500">Cần bấm Lưu cấu hình để áp dụng.</span>
                   </label>
 
                   <label className="text-sm font-semibold text-neutral-800">
