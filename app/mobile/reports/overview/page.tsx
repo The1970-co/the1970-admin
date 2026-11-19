@@ -598,6 +598,36 @@ export default function MobileReportOverviewPage() {
           <button type="button" onClick={() => void load(true)} className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm"><RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} /></button>
         </header>
 
+        {/* Truy cập nhanh báo cáo chi tiết, không cần chờ thông báo Push. */}
+        <div className="mb-5 grid grid-cols-2 gap-3">
+          <Link
+            href="/mobile/reports/business"
+            className="group flex min-h-[122px] flex-col justify-between rounded-[1.5rem] bg-neutral-950 p-4 text-white shadow-sm transition active:scale-[0.98]"
+          >
+            <div className="flex items-center justify-between">
+              <Wallet className="h-5 w-5 text-white/80" />
+              <ChevronRight className="h-4 w-4 text-white/50 transition group-hover:translate-x-0.5" />
+            </div>
+            <div>
+              <div className="text-sm font-black">Báo cáo kinh doanh</div>
+              <div className="mt-1 text-[11px] leading-4 text-white/60">Doanh thu, Ads, lợi nhuận</div>
+            </div>
+          </Link>
+          <Link
+            href="/mobile/reports/products"
+            className="group flex min-h-[122px] flex-col justify-between rounded-[1.5rem] bg-white p-4 text-neutral-950 shadow-sm transition active:scale-[0.98]"
+          >
+            <div className="flex items-center justify-between">
+              <ShoppingBag className="h-5 w-5 text-neutral-700" />
+              <ChevronRight className="h-4 w-4 text-neutral-400 transition group-hover:translate-x-0.5" />
+            </div>
+            <div>
+              <div className="text-sm font-black">Báo cáo sản phẩm</div>
+              <div className="mt-1 text-[11px] leading-4 text-neutral-500">Top 20 · POS · FB/COD</div>
+            </div>
+          </Link>
+        </div>
+
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
           {RANGE_OPTIONS.map((item) => (
             <button key={item.key} type="button" onClick={() => setRange(item.key)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${range === item.key ? "bg-neutral-950 text-white" : "bg-white text-neutral-600"}`}>{item.label}</button>
