@@ -124,7 +124,12 @@ export default function MobileAutopilotPage() {
   const [expandedId, setExpandedId] = useState("");
   const [launchAvailable, setLaunchAvailable] = useState(true);
   const [launchError, setLaunchError] = useState("");
-  const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
+  const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("all");
+  const [managerLevel, setManagerLevel] = useState<"campaign" | "adset" | "ad">("ad");
+  const [adsViewMode, setAdsViewMode] = useState<"cards" | "list">("cards");
+  const [managerRange, setManagerRange] = useState<"today" | "yesterday" | "7d" | "30d">("today");
+  const [statusHistory, setStatusHistory] = useState<AnyRow[]>([]);
+  const [managerBusyId, setManagerBusyId] = useState("");
   const [selectedLevel, setSelectedLevel] = useState<AutomationLevel>("manual");
   const [postFilter, setPostFilter] = useState<"all" | "no_ad" | "has_ad">("no_ad");
   const [mappingOptions, setMappingOptions] = useState<AnyRow[]>([]);
@@ -196,6 +201,11 @@ export default function MobileAutopilotPage() {
         const [, fromDate, toDate] = rangeKey.split(":");
         if (!fromDate || !toDate) return;
         url = `/meta-ads/live-insights?range=custom&fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}&level=ad&limit=1000`;
+      } else if (rangeKey === "7d" || rangeKey === "30d") {
+        const end = new Date();
+        const start = new Date(end);
+        start.setDate(start.getDate() - (rangeKey === "7d" ? 6 : 29));
+        url = `/meta-ads/live-insights?range=custom&fromDate=${hcmDateKey(start)}&toDate=${hcmDateKey(end)}&level=ad&limit=1000`;
       } else {
         url = `/meta-ads/live-insights?range=${encodeURIComponent(rangeKey)}&level=ad&limit=1000`;
       }
@@ -233,9 +243,10 @@ export default function MobileAutopilotPage() {
       const core = await Promise.allSettled([
         apiJson("/meta-ads/autopilot/performance/status"),
         apiJson("/meta-ads/autopilot/inventory/status"),
-        apiJson("/meta-ads/autopilot/live-ads?limit=500"),
+        apiJson("/meta-ads/autopilot/live-ads?limit=500&includeInactive=true"),
         apiJson("/meta-ads/autopilot/scale-history?limit=500"),
         apiJson("/meta-ads/autopilot/control-center"),
+        apiJson("/meta-ads/autopilot/ad-status-history?limit=500"),
       ]);
 
       const value = (i: number) => core[i]?.status === "fulfilled" ? (core[i] as PromiseFulfilledResult<any>).value : null;
@@ -244,6 +255,8 @@ export default function MobileAutopilotPage() {
       const rawLive = value(2);
       const history = value(3);
       const control = value(4);
+      const actionHistory = value(5);
+      setStatusHistory(Array.isArray(actionHistory?.items) ? actionHistory.items : []);
 
       setPerformance(perf);
       setInventory(inv);
@@ -293,6 +306,8 @@ export default function MobileAutopilotPage() {
           manualProductCode: ctl.manualProductCode ?? raw.manualProductCode ?? ctl.manualMapping?.productCode ?? raw.manualMapping?.productCode ?? null,
           manualColor: ctl.manualColor ?? raw.manualColor ?? ctl.manualMapping?.color ?? raw.manualMapping?.color ?? null,
           manualMapping: ctl.manualMapping ?? raw.manualMapping ?? null,
+          status: raw.status || ctl.status || null,
+          effectiveStatus: raw.effectiveStatus || ctl.effectiveStatus || null,
         };
       });
 
@@ -403,6 +418,7 @@ export default function MobileAutopilotPage() {
   }
 
   useEffect(() => { void loadAll(); }, []);
+  useEffect(() => { void ensureAdInsights(managerRange); }, [managerRange]);
 
   const adSetOptions = useMemo(() => {
     const m = new Map<string, AnyRow>();
@@ -452,11 +468,11 @@ export default function MobileAutopilotPage() {
     const hasCreative = Boolean(String(row.thumbnailUrl || row.thumbnail_url || "").trim());
     return status === "ACTIVE" && hasCreative;
   });
-  const filteredAds = operationalAds.filter((row) => {
+  const filteredAds = liveAds.filter((row) => {
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
     const stock = assessments[String(row.metaAdId || row.id || "")] || {};
     if (adFilter === "active") return status === "ACTIVE";
-    if (adFilter === "paused") return status === "PAUSED";
+    if (adFilter === "paused") return status !== "ACTIVE";
     if (adFilter === "stock") return ["LOW_STOCK", "CRITICAL", "FAMILY_LOW_STOCK", "FAMILY_WATCH"].includes(String(stock.level || "").toUpperCase());
     if (adFilter === "scale") {
       const spend = num(row.spend24h ?? row.spend);
@@ -465,6 +481,61 @@ export default function MobileAutopilotPage() {
     }
     return true;
   });
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("autopilotAdsViewMode") === "list") setAdsViewMode("list");
+    } catch { /* private browsing */ }
+  }, []);
+
+  function chooseAdsView(mode: "cards" | "list") {
+    setAdsViewMode(mode);
+    if (mode === "list" && managerLevel === "ad") setManagerLevel("campaign");
+    try { window.localStorage.setItem("autopilotAdsViewMode", mode); } catch { /* ignore */ }
+  }
+
+  const currentDay = hcmDateKey(new Date());
+  const periodDates = useMemo(() => {
+    const today = new Date();
+    const end = new Date(today);
+    if (managerRange === "yesterday") end.setDate(end.getDate() - 1);
+    const start = new Date(end);
+    if (managerRange === "7d") start.setDate(start.getDate() - 6);
+    if (managerRange === "30d") start.setDate(start.getDate() - 29);
+    return { start: hcmDateKey(start), end: hcmDateKey(end) };
+  }, [managerRange]);
+  const periodActions = statusHistory.filter(x => {
+    const day = hcmDateKey(x.at);
+    return day && day >= periodDates.start && day <= periodDates.end;
+  });
+  const periodPaused = periodActions.filter(x => String(x.action) === "PAUSED" && String(x.level || "ad") === "ad");
+  const pauseByAd = new Map<string, AnyRow>();
+  for (const a of periodPaused) if (!pauseByAd.has(String(a.metaAdId))) pauseByAd.set(String(a.metaAdId), a);
+  // Ngày quá khứ: ads có phân phối hoặc có sự kiện pause trong kỳ.
+  // Không ẩn toàn bộ nếu Meta insights chưa trả về.
+  const managerPeriodAds = useMemo(() => {
+    const metrics = insightsByRange[managerRange];
+    if (!metrics) return filteredAds;
+    return filteredAds.filter(row => {
+      const id = String(row.metaAdId || row.id || "");
+      const matched = metrics[id];
+      const hasDelivery = num(matched?.metrics?.spend ?? matched?.spend) > 0 || num(matched?.metrics?.impressions ?? matched?.impressions) > 0;
+      const pausedInRange = periodPaused.some(a => String(a.metaAdId) === id);
+      return hasDelivery || pausedInRange || adFilter === "paused" || (managerRange === "today" && String(row.effectiveStatus || row.status).toUpperCase() === "ACTIVE");
+    });
+  }, [filteredAds, insightsByRange, managerRange, periodDates.start, periodDates.end, statusHistory, adFilter]);
+
+  const managerGroups = useMemo(() => {
+    const groups = new Map<string, { id: string; name: string; rows: AnyRow[] }>();
+    for (const row of managerPeriodAds) {
+      const isCampaign = managerLevel === "campaign";
+      const key = isCampaign ? String(row.metaCampaignId || row.campaignId || row.campaignName || "unknown") : String(row.metaAdSetId || row.adSetId || row.adSetName || "unknown");
+      const name = isCampaign ? String(row.campaignName || key) : String(row.adSetName || key);
+      if (!groups.has(key)) groups.set(key, { id: key, name, rows: [] });
+      groups.get(key)!.rows.push(row);
+    }
+    return Array.from(groups.values());
+  }, [managerPeriodAds, managerLevel]);
 
   const todayScaleHistory = scaleHistory.filter(
     (item) => hcmDateKey(item?.startedAt || item?.createdAt) === hcmDateKey(new Date()),
@@ -605,6 +676,19 @@ export default function MobileAutopilotPage() {
       setMessage(status === "ACTIVE" ? "Đã bật Ad." : "Đã pause Ad."); await loadAll(false);
     } catch (e: any) { setError(e?.message || "Không đổi được trạng thái Ad"); }
     finally { setBusy(false); }
+  }
+
+  async function setGroupStatus(id: string, status: "ACTIVE" | "PAUSED") {
+    if (managerLevel === "ad") return;
+    const level = managerLevel;
+    if (!window.confirm(`${status === "ACTIVE" ? "Bật" : "Tắt"} ${level === "campaign" ? "chiến dịch" : "nhóm quảng cáo"} này trên Meta?`)) return;
+    setManagerBusyId(id); setError("");
+    try {
+      await apiJson("/meta-ads/actions/entity-status", { method: "POST", body: JSON.stringify({ level, metaId: id, status }) });
+      setMessage(`Đã ${status === "ACTIVE" ? "bật" : "tắt"} ${level === "campaign" ? "chiến dịch" : "nhóm quảng cáo"} trên Meta.`);
+      await loadAll(false);
+    } catch (e: any) { setError(e?.message || "Không thay đổi được trạng thái Meta"); }
+    finally { setManagerBusyId(""); }
   }
 
   async function scaleAd(row: AnyRow, percent: number, targetBudget?: number) {
@@ -1073,6 +1157,118 @@ export default function MobileAutopilotPage() {
         {loading ? <div className="py-16 text-center text-sm font-bold text-neutral-400">Đang tải Autopilot...</div> : null}
 
         {!loading && tab === "ads" ? <div className="space-y-3">
+          <section className="rounded-2xl border border-neutral-200 bg-white p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-black">Quản lý quảng cáo · Theo Meta Ads Manager</div>
+              <div className="flex shrink-0 rounded-lg bg-neutral-100 p-1" aria-label="Kiểu hiển thị quảng cáo">
+                <button type="button" onClick={() => chooseAdsView("cards")} aria-pressed={adsViewMode === "cards"} className={`rounded-md px-3 py-2 text-[10px] font-bold ${adsViewMode === "cards" ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500"}`}>Thẻ cũ</button>
+                <button type="button" onClick={() => chooseAdsView("list")} aria-pressed={adsViewMode === "list"} className={`rounded-md px-3 py-2 text-[10px] font-bold ${adsViewMode === "list" ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500"}`}>Danh sách</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-1 rounded-xl bg-neutral-100 p-1">
+              {([ ["today","Hôm nay"], ["yesterday","Hôm qua"], ["7d","7 ngày"], ["30d","30 ngày"] ] as const).map(([id, label]) => <button key={id} onClick={() => setManagerRange(id)} className={`rounded-lg px-1 py-2 text-[10px] font-black ${managerRange === id ? "bg-white shadow-sm" : "text-neutral-500"}`}>{label}</button>)}
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-neutral-50 p-2"><div className="text-[10px] text-neutral-500">Ads đang bật</div><div className="font-black">{liveAds.filter(a => String(a.effectiveStatus || a.status).toUpperCase() === "ACTIVE").length}</div></div>
+              <div className="rounded-xl bg-neutral-50 p-2"><div className="text-[10px] text-neutral-500">Ads đang tắt</div><div className="font-black">{liveAds.filter(a => String(a.effectiveStatus || a.status).toUpperCase() !== "ACTIVE").length}</div></div>
+              <div className="rounded-xl bg-amber-50 p-2"><div className="text-[10px] text-amber-700">Đã tắt kỳ này</div><div className="font-black">{pauseByAd.size}</div></div>
+            </div>
+            <div className="grid grid-cols-3 gap-1 rounded-xl bg-neutral-100 p-1">
+              {([ ["campaign", "Chiến dịch"], ["adset", "Nhóm QC"], ["ad", "Quảng cáo"] ] as const).map(([id, label]) => <button key={id} onClick={() => setManagerLevel(id)} className={`rounded-lg px-1 py-2 text-[11px] font-black ${managerLevel === id ? "bg-neutral-950 text-white" : "text-neutral-500"}`}>{label}</button>)}
+            </div>
+            {periodPaused.length ? <div className="rounded-xl bg-amber-50 p-3">
+              <div className="mb-2 text-[11px] font-black">Lịch sử tắt Ads ({periodPaused.length} lượt)</div>
+              {periodPaused.slice(0, 15).map((a, i) => {
+                const ad = liveAds.find(x => String(x.metaAdId || x.id) === String(a.metaAdId));
+                return <div key={String(a.id || i)} className="border-t border-amber-100 py-2 text-[11px]">
+                  <div className="font-bold">{ad?.adName || ad?.name || `Ads ${a.metaAdId}`}</div>
+                  <div className="text-neutral-600">{a.actor === "AUTOPILOT_INVENTORY" ? "Autopilot tự tắt · Tồn kho" : "Tắt thủ công trên ứng dụng"} · {new Date(a.at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</div>
+                </div>;
+              })}
+            </div> : <div className="text-[11px] text-neutral-500">Chưa có lượt tắt được ghi nhận trong kỳ. Lịch sử bắt đầu từ khi triển khai bản cập nhật.</div>}
+          </section>
+          {adsViewMode === "list" && (() => {
+            const rows = managerLevel === "ad"
+              ? managerPeriodAds.map(ad => ({ id: String(ad.metaAdId || ad.id || ""), name: String(ad.adName || ad.name || "Quảng cáo"), ads: [ad], item: ad }))
+              : managerGroups.map(g => ({ id: g.id, name: g.name, ads: g.rows, item: null as AnyRow | null }));
+            const metricOf = (ad: AnyRow, field: string) => {
+              const id = String(ad.metaAdId || ad.id || "");
+              const insight = insightsByRange[managerRange]?.[id];
+              return num(insight?.metrics?.[field] ?? insight?.[field] ?? (managerRange === "today" ? ad?.[field] : 0));
+            };
+            return <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+              <div className="flex items-center justify-between border-b border-neutral-100 px-3 py-2">
+                <span className="text-[11px] font-black">{managerLevel === "campaign" ? "Chiến dịch" : managerLevel === "adset" ? "Nhóm quảng cáo" : "Quảng cáo"} · {rows.length} dòng</span>
+                <span className="text-[10px] text-neutral-400">Vuốt ngang để xem số liệu →</span>
+              </div>
+              <div className="w-full overflow-x-auto overscroll-x-contain">
+                <table className="w-full min-w-[800px] table-fixed border-collapse text-left text-[11px]">
+                  <thead className="sticky top-0 bg-neutral-100 text-neutral-600">
+                    <tr>
+                      <th className="w-[76px] px-3 py-3">Tắt/Bật</th>
+                      <th className="w-[235px] px-3 py-3">{managerLevel === "campaign" ? "Chiến dịch" : managerLevel === "adset" ? "Nhóm quảng cáo" : "Quảng cáo"}</th>
+                      <th className="w-[128px] px-3 py-3">Phân phối</th>
+                      <th className="w-[100px] px-3 py-3 text-right">Kết quả</th>
+                      <th className="w-[125px] px-3 py-3 text-right">Chi phí/KQ</th>
+                      <th className="w-[125px] px-3 py-3 text-right">Đã chi tiêu</th>
+                      <th className="w-[92px] px-3 py-3 text-right">Số Ads</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((g, index) => {
+                      const first = g.ads[0] || {};
+                      const configured = String(managerLevel === "campaign" ? (first.campaignStatus || first.campaignEffectiveStatus) : managerLevel === "adset" ? (first.adSetStatus || first.adSetEffectiveStatus) : (first.status || first.effectiveStatus) || "").toUpperCase();
+                      const effective = String(managerLevel === "campaign" ? (first.campaignEffectiveStatus || first.campaignStatus) : managerLevel === "adset" ? (first.adSetEffectiveStatus || first.adSetStatus) : (first.effectiveStatus || first.status) || "").toUpperCase();
+                      const on = configured === "ACTIVE";
+                      const delivering = effective === "ACTIVE";
+                      const spend = g.ads.reduce((sum, a) => sum + metricOf(a, "spend"), 0);
+                      const results = g.ads.reduce((sum, a) => sum + metricOf(a, "conversationStarts"), 0);
+                      const fallbackResults = g.ads.reduce((sum, a) => sum + metricOf(a, "purchases"), 0);
+                      const actualResults = results || fallbackResults;
+                      const canToggle = /^\d+$/.test(g.id) && !busy && !managerBusyId;
+                      return <tr key={`${managerLevel}-${g.id}-${index}`} className={`border-t border-neutral-100 ${index % 2 ? "bg-neutral-50/70" : "bg-white"}`}>
+                        <td className="px-3 py-3 align-middle">
+                          <button type="button" disabled={!canToggle} aria-label={`${on ? "Tắt" : "Bật"} ${g.name}`} aria-pressed={on} onClick={() => {
+                            if (managerLevel === "ad") {
+                              if (window.confirm(`${on ? "Tắt" : "Bật"} quảng cáo này trên Meta?`)) void setAdStatus(first, on ? "PAUSED" : "ACTIVE");
+                            } else void setGroupStatus(g.id, on ? "PAUSED" : "ACTIVE");
+                          }} className={`relative inline-flex h-6 w-11 rounded-full transition-colors ${on ? "bg-sky-600" : "bg-neutral-300"} disabled:opacity-50`}>
+                            <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? "left-6" : "left-1"}`} />
+                          </button>
+                        </td>
+                        <td className="px-3 py-3 align-middle">
+                          <div className="flex items-center gap-2">
+                            {managerLevel === "ad" && (first.thumbnailUrl || first.thumbnail_url) ? <img src={first.thumbnailUrl || first.thumbnail_url} alt="" className="h-9 w-9 shrink-0 rounded object-cover" /> : null}
+                            <div className="min-w-0"><div className="line-clamp-2 font-bold text-neutral-900">{g.name}</div>
+                              {managerLevel !== "ad" ? <div className="mt-0.5 text-[10px] text-neutral-400">{g.ads.length} quảng cáo</div> : <button type="button" onClick={() => { chooseAdsView("cards"); setManagerLevel("ad"); setExpandedId(g.id); }} className="mt-0.5 text-[10px] font-semibold text-sky-700">Chi tiết</button>}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-middle"><span className={`inline-flex items-center gap-1.5 ${delivering ? "text-emerald-700" : "text-neutral-500"}`}><span className={`h-2 w-2 rounded-full ${delivering ? "bg-emerald-600" : "bg-neutral-300"}`} />{delivering ? "Đang hoạt động" : effective.includes("CAMPAIGN") || effective.includes("ADSET") ? "Cấp trên đã tắt" : "Đang tắt"}</span></td>
+                        <td className="px-3 py-3 text-right tabular-nums">{actualResults ? actualResults.toLocaleString("vi-VN") : "—"}</td>
+                        <td className="px-3 py-3 text-right tabular-nums">{actualResults ? money(spend / actualResults) : "—"}</td>
+                        <td className="px-3 py-3 text-right font-semibold tabular-nums">{money(spend)}</td>
+                        <td className="px-3 py-3 text-right tabular-nums">{g.ads.length}</td>
+                      </tr>;
+                    })}
+                    {!rows.length ? <tr><td colSpan={7} className="px-4 py-8 text-center text-neutral-400">Không có dữ liệu trong khoảng thời gian này.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>;
+          })()}
+          {adsViewMode === "cards" && managerLevel !== "ad" && <div className="space-y-2">
+            {managerGroups.map(g => {
+              const active = g.rows.filter(x => String(x.effectiveStatus || x.status).toUpperCase() === "ACTIVE").length;
+              const metrics = g.rows.reduce((total, x) => total + num(insightsByRange[managerRange]?.[String(x.metaAdId || x.id)]?.metrics?.spend), 0);
+              const groupStatus = String(managerLevel === "campaign" ? (g.rows[0]?.campaignStatus || g.rows[0]?.campaignEffectiveStatus) : (g.rows[0]?.adSetStatus || g.rows[0]?.adSetEffectiveStatus)).toUpperCase();
+              return <div key={g.id} className="rounded-2xl border border-neutral-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-2"><div className="min-w-0 flex-1 text-sm font-black">{g.name}</div><button disabled={Boolean(managerBusyId) || busy || !/^\d+$/.test(g.id)} onClick={() => void setGroupStatus(g.id, groupStatus === "ACTIVE" ? "PAUSED" : "ACTIVE")} className={`shrink-0 rounded-xl px-2 py-2 text-[10px] font-black ${groupStatus === "ACTIVE" ? "bg-emerald-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>{groupStatus === "ACTIVE" ? "● Bật · Tắt" : "○ Tắt · Bật"}</button></div>
+                <div className="mt-1 text-[11px] text-neutral-500">{g.rows.length} Ads · {active} đang bật · {g.rows.length-active} tắt · Chi tiêu: {money(metrics)}</div>
+                <button onClick={() => { setManagerLevel("ad"); setAdFilter("all"); }} className="mt-2 text-[11px] font-black underline">Xem quảng cáo</button>
+              </div>;
+            })}
+          </div>}
           <div className="flex gap-2 overflow-x-auto pb-1">
             {([
               ["all","Tất cả"],["active","ACTIVE"],["paused","PAUSED"],["scale","Có thể scale"],["stock","Thiếu size"],
@@ -1101,7 +1297,7 @@ export default function MobileAutopilotPage() {
               </div>
             </div>
           </div>
-          {filteredAds.map((row) => {
+          {adsViewMode === "cards" && managerLevel === "ad" && managerPeriodAds.map((row) => {
             const id = String(row.metaAdId || row.id || "");
             const stock = assessments[id] || {};
             const familyMode = String(stock?.mappingMode || "").toUpperCase() === "PRODUCT_FAMILY";
@@ -1124,8 +1320,10 @@ export default function MobileAutopilotPage() {
                 {row.thumbnailUrl || row.thumbnail_url ? <img src={row.thumbnailUrl || row.thumbnail_url} alt="" className="h-20 w-20 rounded-2xl object-cover bg-neutral-100" /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="line-clamp-2 text-sm font-black leading-5">{row.adName || row.name || row.ad_name || `Ad ${String(row.metaAdId || row.id || "").slice(-6)}`}</div>
-                  <div className="mt-1 flex flex-wrap gap-1">
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
                     <Badge value={status}>{status}</Badge>
+                    <button disabled={busy || managerBusyId === id} onClick={() => { const configured = String(row.status || status).toUpperCase(); if (window.confirm(configured === "ACTIVE" ? "Tắt quảng cáo này trên Meta?" : "Bật quảng cáo này trên Meta?")) void setAdStatus(row, configured === "ACTIVE" ? "PAUSED" : "ACTIVE"); }} className={`rounded-lg px-2 py-1 text-[10px] font-black ${status === "ACTIVE" ? "bg-emerald-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>{status === "ACTIVE" ? "● Bật · Tắt" : "○ Tắt · Bật"}</button>
+                    {pauseByAd.get(id) ? <span className="text-[10px] font-bold text-amber-700">{pauseByAd.get(id)?.actor === "AUTOPILOT_INVENTORY" ? "Auto tắt" : "Tắt thủ công"}</span> : null}
                     {familyLowGroups.length ? <Badge value="CRITICAL">MÀU TỒN THẤP</Badge> : stock?.level ? <Badge value={stock.level}>{familyMode ? "THEO MÃ CHÍNH" : stock.level}</Badge> : null}
                     {todayScaleText ? (
                       <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-black text-white">
