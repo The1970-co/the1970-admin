@@ -95,7 +95,8 @@ export default function MobilePushBootstrap() {
         listeners.push(await PushNotifications.addListener("pushNotificationActionPerformed", event => {
           const data = event.notification.data || {};
           const orderId = data.orderId || data.order_id;
-          if (orderId) window.location.href = `/mobile/orders/${encodeURIComponent(String(orderId))}`;
+          if (data.type === 'meta_autopilot') window.location.href = '/mobile/autopilot';
+          else if (orderId) window.location.href = `/mobile/orders/${encodeURIComponent(String(orderId))}`;
           else if (data.type === "business_report" && (data.kind === "product" || data.kind === "product_test")) {
             const day = /^\d{4}-\d{2}-\d{2}$/.test(String(data.day || "")) ? `?day=${encodeURIComponent(String(data.day))}` : "";
             window.location.href = `/mobile/reports/products${day}`;
