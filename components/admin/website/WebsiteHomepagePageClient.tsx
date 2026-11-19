@@ -540,6 +540,96 @@ export default function WebsiteHomepagePageClient(){
                         </select>
                       </label>
                     </div>
+
+                    <div className="mt-5 border-t pt-4">
+                      <div className="mb-3 text-sm font-semibold">Chữ & vị trí nội dung</div>
+
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <label>
+                          <div className="mb-1 text-xs font-semibold text-neutral-500">Vị trí khối chữ</div>
+                          <select
+                            disabled={!canEdit}
+                            value={(item as any).style?.textPositionY || "BOTTOM"}
+                            onChange={e=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),textPositionY:e.target.value}} as any)}
+                            className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-100"
+                          >
+                            <option value="TOP">Trên</option>
+                            <option value="CENTER">Giữa</option>
+                            <option value="BOTTOM">Dưới</option>
+                          </select>
+                        </label>
+
+                        <label>
+                          <div className="mb-1 text-xs font-semibold text-neutral-500">Căn chữ</div>
+                          <select
+                            disabled={!canEdit}
+                            value={(item as any).style?.textAlign || "LEFT"}
+                            onChange={e=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),textAlign:e.target.value}} as any)}
+                            className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-100"
+                          >
+                            <option value="LEFT">Trái</option>
+                            <option value="CENTER">Giữa</option>
+                            <option value="RIGHT">Phải</option>
+                          </select>
+                        </label>
+
+                        <label>
+                          <div className="mb-1 text-xs font-semibold text-neutral-500">Font tiêu đề</div>
+                          <select
+                            disabled={!canEdit}
+                            value={(item as any).style?.titleFont || "SANS"}
+                            onChange={e=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleFont:e.target.value}} as any)}
+                            className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-100"
+                          >
+                            <option value="SANS">Sans</option>
+                            <option value="SERIF">Serif</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="mt-3 grid gap-3 md:grid-cols-4">
+                        <label>
+                          <div className="mb-1 text-xs font-semibold text-neutral-500">Font dòng nhỏ</div>
+                          <select
+                            disabled={!canEdit}
+                            value={(item as any).style?.subtitleFont || "SANS"}
+                            onChange={e=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),subtitleFont:e.target.value}} as any)}
+                            className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-100"
+                          >
+                            <option value="SANS">Sans</option>
+                            <option value="SERIF">Serif</option>
+                          </select>
+                        </label>
+
+                        <label>
+                          <div className="mb-1 text-xs font-semibold text-neutral-500">Font nội dung</div>
+                          <select
+                            disabled={!canEdit}
+                            value={(item as any).style?.bodyFont || "SANS"}
+                            onChange={e=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),bodyFont:e.target.value}} as any)}
+                            className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-100"
+                          >
+                            <option value="SANS">Sans</option>
+                            <option value="SERIF">Serif</option>
+                          </select>
+                        </label>
+
+                        <Field label="Cỡ dòng nhỏ (px)" value={String((item as any).style?.subtitleFontSizePx ?? 11)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),subtitleFontSizePx:Math.max(8,Math.min(40,Number(v||11)))}} as any)}/>
+                        <Field label="Cỡ tiêu đề (px)" value={String((item as any).style?.titleFontSizePx ?? (index===0?56:24))} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleFontSizePx:Math.max(12,Math.min(120,Number(v||24)))}} as any)}/>
+                      </div>
+
+                      <div className="mt-3 grid gap-3 md:grid-cols-4">
+                        <Field label="Cỡ nội dung (px)" value={String((item as any).style?.bodyFontSizePx ?? 15)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),bodyFontSizePx:Math.max(10,Math.min(60,Number(v||15)))}} as any)}/>
+                        <Field label="Độ đậm tiêu đề" value={String((item as any).style?.titleFontWeight ?? 600)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleFontWeight:Math.max(100,Math.min(900,Number(v||600)))}} as any)}/>
+                        <Field label="Line-height tiêu đề" value={String((item as any).style?.titleLineHeight ?? 1.08)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleLineHeight:Math.max(.8,Math.min(2,Number(v||1.08)))}} as any)}/>
+                        <Field label="Độ rộng khối chữ (px)" value={String((item as any).style?.textMaxWidthPx ?? 500)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),textMaxWidthPx:Math.max(120,Math.min(1400,Number(v||500)))}} as any)}/>
+                      </div>
+
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <Field label="Lề ngang chữ (px)" value={String((item as any).style?.textInsetXPx ?? 28)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),textInsetXPx:Math.max(0,Math.min(240,Number(v||28)))}} as any)}/>
+                        <Field label="Lề dọc chữ (px)" value={String((item as any).style?.textInsetYPx ?? 28)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),textInsetYPx:Math.max(0,Math.min(240,Number(v||28)))}} as any)}/>
+                      </div>
+                    </div>
                   </details>
 
                   {selected.type==="FULL_BLEED_HERO"?<>
