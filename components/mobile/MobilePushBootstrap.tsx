@@ -101,7 +101,11 @@ export default function MobilePushBootstrap() {
             const day = /^\d{4}-\d{2}-\d{2}$/.test(String(data.day || "")) ? `?day=${encodeURIComponent(String(data.day))}` : "";
             window.location.href = `/mobile/reports/products${day}`;
           }
-          else if (data.type === "business_report") window.location.href = "/mobile/reports/overview";
+          else if (data.type === "business_report") {
+            const day = /^\d{4}-\d{2}-\d{2}$/.test(String(data.day || ""))
+              ? `?day=${encodeURIComponent(String(data.day))}` : "";
+            window.location.href = `/mobile/reports/business${day}`;
+          }
           else window.location.href = "/mobile";
         }));
 
