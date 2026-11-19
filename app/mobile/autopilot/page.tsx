@@ -129,6 +129,9 @@ export default function MobileAutopilotPage() {
   const [adsViewMode, setAdsViewMode] = useState<"cards" | "list">("cards");
   const [managerRange, setManagerRange] = useState<"today" | "yesterday" | "7d" | "30d">("today");
   const [statusHistory, setStatusHistory] = useState<AnyRow[]>([]);
+  const [statusHistoryError, setStatusHistoryError] = useState("");
+  const [historyFilter, setHistoryFilter] = useState<"all" | "auto" | "manual" | "unknown">("all");
+  const [showPauseHistory, setShowPauseHistory] = useState(true);
   const [managerBusyId, setManagerBusyId] = useState("");
   const [selectedLevel, setSelectedLevel] = useState<AutomationLevel>("manual");
   const [postFilter, setPostFilter] = useState<"all" | "no_ad" | "has_ad">("no_ad");
@@ -153,6 +156,7 @@ export default function MobileAutopilotPage() {
   const [launchPosts, setLaunchPosts] = useState<AnyRow[]>([]);
   const [liveAds, setLiveAds] = useState<AnyRow[]>([]);
   const [assessments, setAssessments] = useState<Record<string, AnyRow>>({});
+  const [assessmentError, setAssessmentError] = useState("");
   const [budgets, setBudgets] = useState<{ adSets: AnyRow[]; campaigns: AnyRow[] }>({ adSets: [], campaigns: [] });
   const [scaleHistory, setScaleHistory] = useState<AnyRow[]>([]);
   const [insightRangeByAd, setInsightRangeByAd] = useState<Record<string, string>>({});
@@ -246,7 +250,7 @@ export default function MobileAutopilotPage() {
         apiJson("/meta-ads/autopilot/live-ads?limit=500&includeInactive=true"),
         apiJson("/meta-ads/autopilot/scale-history?limit=500"),
         apiJson("/meta-ads/autopilot/control-center"),
-        apiJson("/meta-ads/autopilot/ad-status-history?limit=500"),
+        apiJson("/meta-ads/autopilot/ad-status-history?limit=1000"),
       ]);
 
       const value = (i: number) => core[i]?.status === "fulfilled" ? (core[i] as PromiseFulfilledResult<any>).value : null;
@@ -257,6 +261,7 @@ export default function MobileAutopilotPage() {
       const control = value(4);
       const actionHistory = value(5);
       setStatusHistory(Array.isArray(actionHistory?.items) ? actionHistory.items : []);
+      setStatusHistoryError(core[5]?.status === "rejected" ? String((core[5] as PromiseRejectedResult).reason?.message || "Không tải được nhật ký bật/tắt từ Core") : "");
 
       setPerformance(perf);
       setInventory(inv);
@@ -312,6 +317,22 @@ export default function MobileAutopilotPage() {
       });
 
       setLiveAds(adRows);
+      // Control Center đã dùng cùng inventory assessor với web. Giữ fallback
+      // khi request đánh giá riêng của mobile lỗi hoặc quá dung lượng.
+      const stockFallback: Record<string, AnyRow> = {};
+      for (const ctl of controlRows) {
+        const cid = String(ctl.metaAdId || ctl.adId || ctl.id || "");
+        if (!cid || !ctl.stockLevel || ctl.stockLevel === "UNMAPPED") continue;
+        stockFallback[cid] = {
+          metaAdId: cid, level: ctl.stockLevel, reason: ctl.stockReason,
+          sizes: Array.isArray(ctl.sizes) ? ctl.sizes : [],
+          mappingMode: "CONTROL_CENTER_FALLBACK",
+          productCode: ctl.manualProductCode || ctl.manualMapping?.productCode || null,
+          color: ctl.manualColor || ctl.manualMapping?.color || null,
+        };
+      }
+      setAssessments(stockFallback);
+      setAssessmentError("");
       setScaleHistory(Array.isArray(history) ? history : history?.items || history?.rows || []);
 
       const pickedLevel = (perf?.level || inv?.level || "manual") as AutomationLevel;
@@ -335,7 +356,20 @@ export default function MobileAutopilotPage() {
         const enrich = await Promise.allSettled([
           apiJson("/meta-ads/autopilot/inventory/assess", {
             method: "POST",
-            body: JSON.stringify({ ads: adRows }),
+            // Không gửi nguyên cả rawJson / metrics / attribution của 500 Ads:
+            // payload quá lớn sẽ làm assess thất bại trên mobile.
+            body: JSON.stringify({ ads: adRows.map((ad: AnyRow) => ({
+              metaAdId: String(ad.metaAdId || ad.adId || ad.id || ""),
+              id: String(ad.metaAdId || ad.adId || ad.id || ""),
+              name: ad.adName || ad.name || "",
+              adName: ad.adName || ad.name || "",
+              adSetName: ad.adSetName || "",
+              campaignName: ad.campaignName || "",
+              status: ad.status || "",
+              effectiveStatus: ad.effectiveStatus || "",
+              manualProductCode: ad.manualProductCode || ad.manualMapping?.productCode || null,
+              manualColor: ad.manualColor || ad.manualMapping?.color || null,
+            })) }),
           }),
           apiJson("/meta-ads/autopilot/budgets", {
             method: "POST",
@@ -351,7 +385,15 @@ export default function MobileAutopilotPage() {
           const assessList = Array.isArray(assessmentRows) ? assessmentRows : assessmentRows?.items || assessmentRows?.rows || [];
           const map: Record<string, AnyRow> = {};
           assessList.forEach((x: AnyRow) => { map[String(x.metaAdId || x.id || "")] = x; });
-          setAssessments(map);
+          // Kết quả đánh giá riêng là nguồn chuẩn; fallback chỉ hỗ trợ khi
+          // assessor không trả về một Ad nào đó.
+          setAssessments({ ...stockFallback, ...map });
+          if (!assessList.length && adRows.length) {
+            setAssessmentError("API kiểm tra tồn kho trả về danh sách trống; đang dùng kết quả dự phòng từ Control Center.");
+          }
+        } else {
+          const reason = (enrich[0] as PromiseRejectedResult).reason;
+          setAssessmentError(`Không tải được đánh giá tồn kho: ${String(reason?.message || reason || "Không rõ lỗi")}. Kết quả map chưa xác thực.`);
         }
 
         if (enrich[1].status === "fulfilled") {
@@ -360,6 +402,7 @@ export default function MobileAutopilotPage() {
         }
       } else {
         setAssessments({});
+        setAssessmentError("");
         setBudgets({ adSets: [], campaigns: [] });
       }
 
@@ -508,7 +551,16 @@ export default function MobileAutopilotPage() {
     const day = hcmDateKey(x.at);
     return day && day >= periodDates.start && day <= periodDates.end;
   });
-  const periodPaused = periodActions.filter(x => String(x.action) === "PAUSED" && String(x.level || "ad") === "ad");
+  const periodPaused = periodActions.filter(x => String(x.action).toUpperCase() === "PAUSED");
+  const autoPaused = periodPaused.filter(x => x.actor === "AUTOPILOT_INVENTORY" && String(x.level || "ad") === "ad");
+  const manualPaused = periodPaused.filter(x => x.actor !== "AUTOPILOT_INVENTORY");
+  const pausedHistoryAdIds = new Set(statusHistory.filter(x => x.action === "PAUSED" && String(x.level || "ad") === "ad").map(x => String(x.metaAdId)));
+  const unverifiedPaused = liveAds.filter(ad => {
+    const status = String(ad.status || "").toUpperCase();
+    const effective = String(ad.effectiveStatus || "").toUpperCase();
+    return (status === "PAUSED" || effective.includes("PAUSED")) && !pausedHistoryAdIds.has(String(ad.metaAdId || ad.id));
+  });
+  const visiblePauseEvents = periodPaused.filter(x => historyFilter === "all" || (historyFilter === "auto" ? x.actor === "AUTOPILOT_INVENTORY" : historyFilter === "manual" ? x.actor !== "AUTOPILOT_INVENTORY" : false));
   const pauseByAd = new Map<string, AnyRow>();
   for (const a of periodPaused) if (!pauseByAd.has(String(a.metaAdId))) pauseByAd.set(String(a.metaAdId), a);
   // Ngày quá khứ: ads có phân phối hoặc có sự kiện pause trong kỳ.
@@ -672,8 +724,8 @@ export default function MobileAutopilotPage() {
     const id = String(row.metaAdId || row.id || ""); if (!id) return;
     setBusy(true); setError("");
     try {
-      await apiJson("/meta-ads/actions/ad-status", { method: "POST", body: JSON.stringify({ metaAdId: id, status }) });
-      setMessage(status === "ACTIVE" ? "Đã bật Ad." : "Đã pause Ad."); await loadAll(false);
+      const result = await apiJson("/meta-ads/actions/ad-status", { method: "POST", body: JSON.stringify({ metaAdId: id, status }) });
+      setMessage(result?.auditWarning || (status === "ACTIVE" ? "Đã bật Ad và ghi lịch sử." : "Đã pause Ad và ghi lịch sử.")); await loadAll(false);
     } catch (e: any) { setError(e?.message || "Không đổi được trạng thái Ad"); }
     finally { setBusy(false); }
   }
@@ -1168,24 +1220,44 @@ export default function MobileAutopilotPage() {
             <div className="grid grid-cols-4 gap-1 rounded-xl bg-neutral-100 p-1">
               {([ ["today","Hôm nay"], ["yesterday","Hôm qua"], ["7d","7 ngày"], ["30d","30 ngày"] ] as const).map(([id, label]) => <button key={id} onClick={() => setManagerRange(id)} className={`rounded-lg px-1 py-2 text-[10px] font-black ${managerRange === id ? "bg-white shadow-sm" : "text-neutral-500"}`}>{label}</button>)}
             </div>
+            {assessmentError ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold leading-5 text-amber-900">⚠ {assessmentError} <button className="ml-1 underline" onClick={() => void loadAll(false)}>Thử lại</button></div> : null}
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl bg-neutral-50 p-2"><div className="text-[10px] text-neutral-500">Ads đang bật</div><div className="font-black">{liveAds.filter(a => String(a.effectiveStatus || a.status).toUpperCase() === "ACTIVE").length}</div></div>
               <div className="rounded-xl bg-neutral-50 p-2"><div className="text-[10px] text-neutral-500">Ads đang tắt</div><div className="font-black">{liveAds.filter(a => String(a.effectiveStatus || a.status).toUpperCase() !== "ACTIVE").length}</div></div>
-              <div className="rounded-xl bg-amber-50 p-2"><div className="text-[10px] text-amber-700">Đã tắt kỳ này</div><div className="font-black">{pauseByAd.size}</div></div>
+              <button type="button" onClick={() => { setHistoryFilter("all"); setShowPauseHistory(v => !v); }} className="rounded-xl bg-amber-50 p-2 text-left"><div className="text-[10px] text-amber-700">Đã tắt trong kỳ</div><div className="font-black">{periodPaused.length}</div><div className="text-[9px] text-amber-700">Tự động {autoPaused.length} · Thủ công {manualPaused.length}</div></button>
             </div>
             <div className="grid grid-cols-3 gap-1 rounded-xl bg-neutral-100 p-1">
               {([ ["campaign", "Chiến dịch"], ["adset", "Nhóm QC"], ["ad", "Quảng cáo"] ] as const).map(([id, label]) => <button key={id} onClick={() => setManagerLevel(id)} className={`rounded-lg px-1 py-2 text-[11px] font-black ${managerLevel === id ? "bg-neutral-950 text-white" : "text-neutral-500"}`}>{label}</button>)}
             </div>
-            {periodPaused.length ? <div className="rounded-xl bg-amber-50 p-3">
-              <div className="mb-2 text-[11px] font-black">Lịch sử tắt Ads ({periodPaused.length} lượt)</div>
-              {periodPaused.slice(0, 15).map((a, i) => {
-                const ad = liveAds.find(x => String(x.metaAdId || x.id) === String(a.metaAdId));
-                return <div key={String(a.id || i)} className="border-t border-amber-100 py-2 text-[11px]">
-                  <div className="font-bold">{ad?.adName || ad?.name || `Ads ${a.metaAdId}`}</div>
-                  <div className="text-neutral-600">{a.actor === "AUTOPILOT_INVENTORY" ? "Autopilot tự tắt · Tồn kho" : "Tắt thủ công trên ứng dụng"} · {new Date(a.at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</div>
-                </div>;
-              })}
-            </div> : <div className="text-[11px] text-neutral-500">Chưa có lượt tắt được ghi nhận trong kỳ. Lịch sử bắt đầu từ khi triển khai bản cập nhật.</div>}
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 space-y-2">
+              <button type="button" onClick={() => setShowPauseHistory(v => !v)} className="flex w-full items-center justify-between text-left text-[12px] font-black">
+                <span>Nhật ký bật/tắt Ads · {periodPaused.length} lượt tắt trong kỳ</span><span>{showPauseHistory ? "Thu gọn ▲" : "Xem chi tiết ▼"}</span>
+              </button>
+              {showPauseHistory ? <>
+                <div className="grid grid-cols-4 gap-1">
+                  {([ ["all", "Tất cả"], ["auto", "Tự động"], ["manual", "Thủ công"], ["unknown", "Chưa rõ"] ] as const).map(([id,label]) => <button key={id} type="button" onClick={() => setHistoryFilter(id)} className={`rounded-lg px-1 py-2 text-[10px] font-bold ${historyFilter === id ? "bg-neutral-950 text-white" : "bg-white text-neutral-600"}`}>{label}</button>)}
+                </div>
+                {statusHistoryError ? <div className="rounded-lg bg-rose-50 p-2 text-[11px] text-rose-700">Không tải được lịch sử: {statusHistoryError}. Số lượt tắt chưa xác thực, không phải bằng 0.</div> : null}
+                {historyFilter !== "unknown" && visiblePauseEvents.length ? <div className="max-h-80 space-y-2 overflow-y-auto">
+                  {visiblePauseEvents.slice(0, 100).map((a,i) => {
+                    const ad = liveAds.find(x => String(x.metaAdId || x.id) === String(a.metaAdId));
+                    const label = a.actor === "AUTOPILOT_INVENTORY" ? "Autopilot tự tắt · Tồn kho" : "Tắt thủ công trong ứng dụng";
+                    return <div key={String(a.id || i)} className="rounded-lg border border-neutral-200 bg-white p-2 text-[11px]">
+                      <div className="font-bold">{a.adName || ad?.adName || ad?.name || `${a.level === "campaign" ? "Chiến dịch" : a.level === "adset" ? "Nhóm quảng cáo" : "Ads"} ${a.metaAdId || a.metaEntityId}`}</div>
+                      <div className="mt-1 font-semibold text-amber-700">{label}</div>
+                      <div className="text-neutral-500">{new Date(a.at).toLocaleString("vi-VN", {timeZone: "Asia/Ho_Chi_Minh"})}</div>
+                      {a.productCode || a.color ? <div className="mt-1">Mapping: {a.productCode || "?"} · {a.color || "Chưa rõ màu"} {a.matchMode ? `(${a.matchMode})` : ""}</div> : null}
+                      {a.reason ? <div className="mt-1 text-neutral-600">Lý do: {a.reason}</div> : null}
+                      {Array.isArray(a.sizes) && a.sizes.length ? <div className="mt-1 text-neutral-500">Tồn lúc tắt: {a.sizes.map((s: AnyRow) => `${s.size}: ${s.qty}`).join(" · ")}</div> : null}
+                    </div>;
+                  })}
+                </div> : null}
+                {historyFilter !== "unknown" && !visiblePauseEvents.length && !statusHistoryError ? <div className="text-[11px] text-neutral-500">Không có sự kiện tắt được ghi nhận trong khoảng ngày này. Không có nghĩa là Meta chưa từng tắt Ads.</div> : null}
+                {historyFilter === "unknown" ? <div className="max-h-80 space-y-2 overflow-y-auto">
+                  {unverifiedPaused.length ? unverifiedPaused.slice(0,100).map((ad,i) => <div key={String(ad.metaAdId || ad.id || i)} className="rounded-lg bg-white p-2 text-[11px]"><div className="font-bold">{ad.adName || ad.name}</div><div className="text-neutral-500">Đang PAUSED · Chưa có nhật ký xác minh ai tắt, khi nào. Có thể đã tắt trước lúc triển khai hoặc trực tiếp trong Meta.</div></div>) : <div className="text-[11px] text-neutral-500">Không có Ads trạng thái PAUSED chưa rõ nguồn trong dữ liệu hiện tại.</div>}
+                </div> : <div className="text-[10px] text-neutral-500">{unverifiedPaused.length} Ads hiện đang PAUSED chưa có bản ghi tắt trong lịch sử tải được. Chọn “Chưa rõ” để xem tên.</div>}
+              </> : null}
+            </div>
           </section>
           {adsViewMode === "list" && (() => {
             const rows = managerLevel === "ad"
@@ -1240,7 +1312,17 @@ export default function MobileAutopilotPage() {
                           <div className="flex items-center gap-2">
                             {managerLevel === "ad" && (first.thumbnailUrl || first.thumbnail_url) ? <img src={first.thumbnailUrl || first.thumbnail_url} alt="" className="h-9 w-9 shrink-0 rounded object-cover" /> : null}
                             <div className="min-w-0"><div className="line-clamp-2 font-bold text-neutral-900">{g.name}</div>
-                              {managerLevel !== "ad" ? <div className="mt-0.5 text-[10px] text-neutral-400">{g.ads.length} quảng cáo</div> : <button type="button" onClick={() => { chooseAdsView("cards"); setManagerLevel("ad"); setExpandedId(g.id); }} className="mt-0.5 text-[10px] font-semibold text-sky-700">Chi tiết</button>}
+                              {managerLevel !== "ad" ? <div className="mt-0.5 text-[10px] text-neutral-400">{g.ads.length} quảng cáo</div> : <>
+                                {(() => {
+                                  const mapping = assessments[String(first.metaAdId || first.id || "")];
+                                  if (!mapping) return <div className="mt-1 text-[10px] text-amber-700">{assessmentError ? "Chưa tải được tồn kho" : "Chưa có kết quả map"}</div>;
+                                  if (mapping.mappingMode === "PRODUCT_FAMILY") return <div className="mt-1 text-[10px] text-amber-700">{mapping.productCode} · theo mã chính ({mapping.groups?.length || 0} màu)</div>;
+                                  if (mapping.productCode && mapping.color) return <div className="mt-1 text-[10px] text-emerald-700">{mapping.productCode} · {mapping.color}</div>;
+                                  if (mapping.mappingMode === "CONTROL_CENTER_FALLBACK") return <div className="mt-1 text-[10px] text-amber-700">Tồn kho dự phòng · chưa xác minh màu</div>;
+                                  return <div className="mt-1 text-[10px] text-amber-700">Chưa map chắc chắn mã / màu</div>;
+                                })()}
+                                <button type="button" onClick={() => { chooseAdsView("cards"); setManagerLevel("ad"); setExpandedId(g.id); }} className="mt-0.5 text-[10px] font-semibold text-sky-700">Chi tiết</button>
+                              </>}
                             </div>
                           </div>
                         </td>
@@ -1340,8 +1422,10 @@ export default function MobileAutopilotPage() {
                         : `${stock.productCode} · ${stock.color || ""}`
                       : row.manualProductCode || row.manualMapping?.productCode
                         ? `${row.manualProductCode || row.manualMapping?.productCode} · ${row.manualColor || row.manualMapping?.color || ""}`
-                        : "Chưa map mã / màu"}
+                        : assessmentError ? "Chưa xác minh được mapping (lỗi tải tồn kho)" : "Chưa map mã / màu"}
                   </div>
+                  {stock?.mappingMode === "PRODUCT_FAMILY" ? <div className="mt-1 text-[10px] font-semibold text-amber-700">Chưa khớp màu riêng; xem tồn tất cả màu trong chi tiết, chưa phải map màu chính xác.</div> : null}
+                  {stock?.mappingMode === "CONTROL_CENTER_FALLBACK" ? <div className="mt-1 text-[10px] font-semibold text-amber-700">Dữ liệu tồn kho dự phòng từ Control Center; cần xác nhận mã/màu trong chi tiết.</div> : null}
                 </div>
               </div>
               <div className="grid grid-cols-3 border-y border-neutral-100 bg-neutral-50">
