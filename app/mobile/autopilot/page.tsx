@@ -24,7 +24,7 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type AutomationLevel = "manual" | "semi" | "auto";
@@ -157,6 +157,8 @@ export default function MobileAutopilotPage() {
   const [liveAds, setLiveAds] = useState<AnyRow[]>([]);
   const [assessments, setAssessments] = useState<Record<string, AnyRow>>({});
   const [assessmentError, setAssessmentError] = useState("");
+  const [assessmentProgress, setAssessmentProgress] = useState<{done:number;total:number}|null>(null);
+  const assessmentRequestId = useRef(0);
   const [budgets, setBudgets] = useState<{ adSets: AnyRow[]; campaigns: AnyRow[] }>({ adSets: [], campaigns: [] });
   const [scaleHistory, setScaleHistory] = useState<AnyRow[]>([]);
   const [insightRangeByAd, setInsightRangeByAd] = useState<Record<string, string>>({});
@@ -238,6 +240,8 @@ export default function MobileAutopilotPage() {
   }
 
   async function loadAll(showSpinner = true) {
+    const requestId = ++assessmentRequestId.current;
+    setAssessmentProgress(null);
     if (showSpinner) setLoading(true);
     setError("");
     setLaunchError("");
@@ -351,58 +355,96 @@ export default function MobileAutopilotPage() {
       setPauseTotalQty(num(inv?.pauseTotalQty) || 40);
       setRequireBoth(inv?.requireBoth !== false);
 
-      // Enrich tồn kho + budget, nhưng lỗi enrich không được xóa Ads.
+      // Assessment của BE phải dùng nguyên engine giống web, nhưng không được
+      // gửi 500 ads trong MỘT request (CPU/timeouts trên Railway).
+      // Ưu tiên Ads đang chạy và các Ads có cảnh báo; sau đó nạp tuần tự
+      // các lô còn lại mà không giữ màn hình chờ hoặc xóa kết quả đã có.
       if (adRows.length) {
-        const enrich = await Promise.allSettled([
-          apiJson("/meta-ads/autopilot/inventory/assess", {
-            method: "POST",
-            // Không gửi nguyên cả rawJson / metrics / attribution của 500 Ads:
-            // payload quá lớn sẽ làm assess thất bại trên mobile.
-            body: JSON.stringify({ ads: adRows.map((ad: AnyRow) => ({
-              metaAdId: String(ad.metaAdId || ad.adId || ad.id || ""),
-              id: String(ad.metaAdId || ad.adId || ad.id || ""),
-              name: ad.adName || ad.name || "",
-              adName: ad.adName || ad.name || "",
-              adSetName: ad.adSetName || "",
-              campaignName: ad.campaignName || "",
-              status: ad.status || "",
-              effectiveStatus: ad.effectiveStatus || "",
-              manualProductCode: ad.manualProductCode || ad.manualMapping?.productCode || null,
-              manualColor: ad.manualColor || ad.manualMapping?.color || null,
-            })) }),
-          }),
-          apiJson("/meta-ads/autopilot/budgets", {
+        const priority = (ad: AnyRow) => {
+          const status = String(ad.effectiveStatus || ad.status || "").toUpperCase();
+          const stock = String(ad.stockLevel || "").toUpperCase();
+          return (status === "ACTIVE" ? 100 : 0) +
+            (["CRITICAL", "FAMILY_LOW_STOCK", "LOW_STOCK"].includes(stock) ? 40 : 0) +
+            (ad.manualProductCode || ad.manualMapping?.productCode ? 10 : 0);
+        };
+        const sorted = [...adRows].sort((a, b) => priority(b) - priority(a));
+        const compactAds = sorted.map((ad: AnyRow) => ({
+          metaAdId: String(ad.metaAdId || ad.adId || ad.id || ""),
+          id: String(ad.metaAdId || ad.adId || ad.id || ""),
+          name: ad.adName || ad.name || "",
+          adName: ad.adName || ad.name || "",
+          adSetName: ad.adSetName || "",
+          campaignName: ad.campaignName || "",
+          status: ad.status || "",
+          effectiveStatus: ad.effectiveStatus || "",
+          manualProductCode: ad.manualProductCode || ad.manualMapping?.productCode || null,
+          manualColor: ad.manualColor || ad.manualMapping?.color || null,
+          manualMapping: ad.manualMapping || null,
+        }));
+        const BATCH_SIZE = 40;
+        const chunks: AnyRow[][] = [];
+        for (let i = 0; i < compactAds.length; i += BATCH_SIZE) chunks.push(compactAds.slice(i, i + BATCH_SIZE));
+        setAssessmentProgress({ done: 0, total: compactAds.length });
+
+        // Request 1 chạy trước; những request còn lại được nạp dần.
+        // Chỉ dữ liệu assess thành công mới được phép ghi đè fallback.
+        const loadStockChunks = async () => {
+          let done = 0;
+          let failures = 0;
+          for (const batch of chunks) {
+            if (assessmentRequestId.current !== requestId) return;
+            try {
+              const response: any = await apiJson("/meta-ads/autopilot/inventory/assess", {
+                method: "POST",
+                body: JSON.stringify({ ads: batch }),
+              });
+              if (assessmentRequestId.current !== requestId) return;
+              const list = Array.isArray(response) ? response :
+                Array.isArray(response?.items) ? response.items :
+                Array.isArray(response?.rows) ? response.rows :
+                Array.isArray(response?.data) ? response.data :
+                Array.isArray(response?.data?.items) ? response.data.items : null;
+              if (!list) throw new Error("API không trả mảng đánh giá tồn kho");
+              const patch: Record<string, AnyRow> = {};
+              for (const item of list) {
+                const id = String(item?.metaAdId || item?.adId || item?.id || "");
+                if (id) patch[id] = item;
+              }
+              setAssessments(prev => ({ ...prev, ...patch }));
+              failures = 0;
+            } catch (e: any) {
+              if (assessmentRequestId.current !== requestId) return;
+              failures += 1;
+              const detail = String(e?.message || e || "Không rõ lỗi");
+              setAssessmentError(`Không tải được tồn kho từ Core (${batch.length} Ads/lô): ${detail}. Nhấn Thử lại để kiểm tra.`);
+              // Nếu BE không phục vụ được assessor thì không spam hàng chục POST.
+              if (failures >= 2) {
+                setAssessmentProgress(null);
+                return;
+              }
+            }
+            done += batch.length;
+            if (assessmentRequestId.current === requestId) setAssessmentProgress({ done, total: compactAds.length });
+          }
+          if (assessmentRequestId.current === requestId) setAssessmentProgress(null);
+        };
+        void loadStockChunks();
+
+        // Budget lấy độc lập, không chờ load toàn bộ tồn kho.
+        try {
+          const budgetRows: any = await apiJson("/meta-ads/autopilot/budgets", {
             method: "POST",
             body: JSON.stringify({
               metaAdSetIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaAdSetId || x.adSetId || "")).filter(Boolean))),
               metaCampaignIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaCampaignId || x.campaignId || "")).filter(Boolean))),
             }),
-          }),
-        ]);
-
-        if (enrich[0].status === "fulfilled") {
-          const assessmentRows: any = enrich[0].value;
-          const assessList = Array.isArray(assessmentRows) ? assessmentRows : assessmentRows?.items || assessmentRows?.rows || [];
-          const map: Record<string, AnyRow> = {};
-          assessList.forEach((x: AnyRow) => { map[String(x.metaAdId || x.id || "")] = x; });
-          // Kết quả đánh giá riêng là nguồn chuẩn; fallback chỉ hỗ trợ khi
-          // assessor không trả về một Ad nào đó.
-          setAssessments({ ...stockFallback, ...map });
-          if (!assessList.length && adRows.length) {
-            setAssessmentError("API kiểm tra tồn kho trả về danh sách trống; đang dùng kết quả dự phòng từ Control Center.");
-          }
-        } else {
-          const reason = (enrich[0] as PromiseRejectedResult).reason;
-          setAssessmentError(`Không tải được đánh giá tồn kho: ${String(reason?.message || reason || "Không rõ lỗi")}. Kết quả map chưa xác thực.`);
-        }
-
-        if (enrich[1].status === "fulfilled") {
-          const budgetRows: any = enrich[1].value;
-          setBudgets({ adSets: budgetRows?.adSets || [], campaigns: budgetRows?.campaigns || [] });
-        }
+          });
+          if (assessmentRequestId.current === requestId) setBudgets({ adSets: budgetRows?.adSets || [], campaigns: budgetRows?.campaigns || [] });
+        } catch (e) { /* Giữ nguyên budget có sẵn trong dữ liệu Meta. */ }
       } else {
         setAssessments({});
         setAssessmentError("");
+        setAssessmentProgress(null);
         setBudgets({ adSets: [], campaigns: [] });
       }
 
@@ -1220,6 +1262,7 @@ export default function MobileAutopilotPage() {
             <div className="grid grid-cols-4 gap-1 rounded-xl bg-neutral-100 p-1">
               {([ ["today","Hôm nay"], ["yesterday","Hôm qua"], ["7d","7 ngày"], ["30d","30 ngày"] ] as const).map(([id, label]) => <button key={id} onClick={() => setManagerRange(id)} className={`rounded-lg px-1 py-2 text-[10px] font-black ${managerRange === id ? "bg-white shadow-sm" : "text-neutral-500"}`}>{label}</button>)}
             </div>
+            {assessmentProgress ? <div className="rounded-xl bg-sky-50 p-3 text-[11px] font-semibold text-sky-800">Đang đối chiếu mã / màu / tồn kho với Core: {assessmentProgress.done}/{assessmentProgress.total} Ads. Các kết quả xác thực sẽ hiện dần.</div> : null}
             {assessmentError ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold leading-5 text-amber-900">⚠ {assessmentError} <button className="ml-1 underline" onClick={() => void loadAll(false)}>Thử lại</button></div> : null}
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl bg-neutral-50 p-2"><div className="text-[10px] text-neutral-500">Ads đang bật</div><div className="font-black">{liveAds.filter(a => String(a.effectiveStatus || a.status).toUpperCase() === "ACTIVE").length}</div></div>
@@ -1406,7 +1449,7 @@ export default function MobileAutopilotPage() {
                     <Badge value={status}>{status}</Badge>
                     <button disabled={busy || managerBusyId === id} onClick={() => { const configured = String(row.status || status).toUpperCase(); if (window.confirm(configured === "ACTIVE" ? "Tắt quảng cáo này trên Meta?" : "Bật quảng cáo này trên Meta?")) void setAdStatus(row, configured === "ACTIVE" ? "PAUSED" : "ACTIVE"); }} className={`rounded-lg px-2 py-1 text-[10px] font-black ${status === "ACTIVE" ? "bg-emerald-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>{status === "ACTIVE" ? "● Bật · Tắt" : "○ Tắt · Bật"}</button>
                     {pauseByAd.get(id) ? <span className="text-[10px] font-bold text-amber-700">{pauseByAd.get(id)?.actor === "AUTOPILOT_INVENTORY" ? "Auto tắt" : "Tắt thủ công"}</span> : null}
-                    {familyLowGroups.length ? <Badge value="CRITICAL">MÀU TỒN THẤP</Badge> : stock?.level ? <Badge value={stock.level}>{familyMode ? "THEO MÃ CHÍNH" : stock.level}</Badge> : null}
+                    {stock?.mappingMode === "CONTROL_CENTER_FALLBACK" ? <Badge value="WARN">CHƯA XÁC MINH TỒN</Badge> : familyLowGroups.length ? <Badge value="CRITICAL">MÀU TỒN THẤP</Badge> : stock?.level ? <Badge value={stock.level}>{familyMode ? "THEO MÃ CHÍNH" : stock.level}</Badge> : null}
                     {todayScaleText ? (
                       <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-black text-white">
                         <span className="h-2 w-2 rounded-[2px] bg-emerald-200" />
