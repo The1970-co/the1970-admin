@@ -279,51 +279,77 @@ function loadQuickReplyImageForResize(file: File): Promise<HTMLImageElement> {
   });
 }
 
-async function resizeQuickReplyImageBeforeUpload(file: File) {
-  if (!file.type.startsWith("image/")) return file;
-
-  // Chat không cần ảnh nguyên bản quá lớn. Giảm dữ liệu trước upload để phản hồi nhanh hơn.
-  const maxBytes = 1.6 * 1024 * 1024;
-  const maxSide = 1280;
-
-  if (file.size <= maxBytes && !file.type.includes("png")) {
-    return file;
-  }
-
-  const image = await loadQuickReplyImageForResize(file);
-  const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
-  const width = Math.max(1, Math.round(image.width * ratio));
-  const height = Math.max(1, Math.round(image.height * ratio));
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return file;
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, width, height);
-  ctx.drawImage(image, 0, 0, width, height);
-
-  const toBlob = (quality: number) =>
-    new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", quality),
+// Only rewrite known static assets; signed/external/unknown transformation URLs stay intact.
+function omniOriginalImageUrl(value: string): string {
+  const original = String(value || "").trim();
+  try {
+    const url = new URL(original);
+    if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com" ||
+        url.port || url.username || url.password || url.search || url.hash) return original;
+    const match = url.pathname.match(
+      /^(\/[^/]+\/image\/upload\/)(?:c_limit,w_(?:1600,h_1600|1200,h_1200|480,h_480|240,h_240)\/(?:q_auto|q_65)\/f_(?:jpg|png|auto)\/)?(v\d+\/the1970\/(?:products|omni-inbox)\/.+\.(?:jpe?g|png))$/i,
     );
+    if (!match) return original;
+    url.pathname = match[1] + match[2];
+    return url.toString();
+  } catch { return original; }
+}
 
-  let quality = 0.78;
-  let blob = await toBlob(quality);
-  while (blob && blob.size > maxBytes && quality > 0.5) {
-    quality -= 0.08;
-    blob = await toBlob(quality);
+function omniPreviewImageUrl(value: string, side: 240 | 480): string {
+  const original = omniOriginalImageUrl(value);
+  try {
+    const url = new URL(original);
+    if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com" ||
+        url.port || url.username || url.password || url.search || url.hash) return value;
+    const match = url.pathname.match(
+      /^(\/[^/]+\/image\/upload\/)(v\d+\/the1970\/(?:products|omni-inbox)\/.+\.(?:jpe?g|png))$/i,
+    );
+    if (!match) return value;
+    url.pathname = match[1] + `c_limit,w_${side},h_${side}/q_65/f_auto/` + match[2];
+    return url.toString();
+  } catch { return value; }
+}
+
+function OmniThumbnail({ src, alt, className }: {
+  src: string; alt: string; className?: string;
+}) {
+  const [fallback, setFallback] = useState(false);
+  useEffect(() => setFallback(false), [src]);
+  return <img src={fallback ? src : omniPreviewImageUrl(src, 240)} alt={alt}
+    className={className} loading="lazy" decoding="async"
+    onError={() => setFallback(true)} />;
+}
+
+async function resizeQuickReplyImageBeforeUpload(file: File) {
+  // Preserve animated formats; only static JPEG/PNG photos use the chat budget.
+  if (!/^image\/(jpeg|png)$/i.test(file.type)) return file;
+  const maxBytes = 250 * 1024;
+  const maxSide = 1200;
+  const image = await loadQuickReplyImageForResize(file);
+  if (file.size <= maxBytes && Math.max(image.width, image.height) <= maxSide) return file;
+  let side = Math.min(maxSide, Math.max(image.width, image.height));
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Không nén được ảnh. Vui lòng thử lại.");
+  let blob: Blob | null = null;
+  while (true) {
+    const ratio = Math.min(1, side / Math.max(image.width, image.height));
+    canvas.width = Math.max(1, Math.round(image.width * ratio));
+    canvas.height = Math.max(1, Math.round(image.height * ratio));
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.76, 0.68, 0.60, 0.52]) {
+      blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (!blob) throw new Error("Không nén được ảnh. Vui lòng thử lại.");
+      if (blob.size <= maxBytes) break;
+    }
+    if (blob && blob.size <= maxBytes) break;
+    if (side <= 640) throw new Error("Ảnh vẫn quá nặng sau khi nén. Hãy chọn ảnh nhỏ hơn.");
+    side = Math.max(640, Math.floor(side * 0.8));
   }
-
-  if (!blob) return file;
   const baseName = file.name.replace(/\.[^.]+$/, "");
-  return new File([blob], `${baseName}.jpg`, {
-    type: "image/jpeg",
-    lastModified: Date.now(),
-  });
+  return new File([blob!], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
 }
 
 
@@ -456,8 +482,8 @@ function isMatchingOptimisticOmniMessage(
 
   const optimisticText = String(optimistic.text || "").trim();
   const incomingText = String(incoming.text || "").trim();
-  const optimisticAttachment = String(optimistic.attachmentUrl || "").trim();
-  const incomingAttachment = String(incoming.attachmentUrl || "").trim();
+  const optimisticAttachment = omniOriginalImageUrl(optimistic.attachmentUrl || "");
+  const incomingAttachment = omniOriginalImageUrl(incoming.attachmentUrl || "");
 
   if (
     optimisticText !== incomingText ||
@@ -2455,7 +2481,7 @@ export default function MessagesPageClient({
                 const confirmed = recentOutboundImages.find(
                   (message) =>
                     !usedMessageIds.has(message.id) &&
-                    String(message.attachmentUrl || "").trim() === url,
+                    omniOriginalImageUrl(message.attachmentUrl || "") === omniOriginalImageUrl(url),
                 );
 
                 if (confirmed) {
@@ -4587,7 +4613,7 @@ export default function MessagesPageClient({
 
                                     {meta.imageUrls.length ? (
                                       <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100">
-                                        <img
+                                        <OmniThumbnail
                                           src={meta.imageUrls[0]}
                                           alt="Ảnh mẫu trả lời"
                                           className="h-full w-full object-cover"
@@ -4722,7 +4748,7 @@ export default function MessagesPageClient({
                                 key={`${url}-${index}`}
                                 className="group relative h-24 w-24 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50"
                               >
-                                <img
+                                <OmniThumbnail
                                   src={url}
                                   alt={`Ảnh đính kèm ${index + 1}`}
                                   className="h-full w-full object-cover"
@@ -5547,7 +5573,7 @@ export default function MessagesPageClient({
                         key={`${url}-${index}`}
                         className="group relative aspect-square overflow-hidden rounded-xl border border-neutral-200 bg-white"
                       >
-                        <img
+                        <OmniThumbnail
                           src={url}
                           alt={`Ảnh đính kèm ${index + 1}`}
                           className="h-full w-full object-cover"
@@ -6742,7 +6768,7 @@ function WorkspacePanel({
                             key={`${url}-${index}`}
                             className="group relative h-20 w-20 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50"
                           >
-                            <img
+                            <OmniThumbnail
                               src={url}
                               alt={`Ảnh mẫu ${index + 1}`}
                               className="h-full w-full object-cover"
@@ -8125,12 +8151,14 @@ function MessageImage({
   isOut: boolean;
 }) {
   const [currentSrc, setCurrentSrc] = useState(src);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [failed, setFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const refreshAttemptedRef = useRef(false);
 
   useEffect(() => {
     setCurrentSrc(src);
+    setPreviewFailed(false);
     setFailed(false);
     setRefreshing(false);
     refreshAttemptedRef.current = false;
@@ -8153,6 +8181,7 @@ function MessageImage({
       if (!nextUrl) throw new Error("Meta không trả URL ảnh mới.");
 
       setCurrentSrc(nextUrl);
+      setPreviewFailed(false);
       setFailed(false);
       refreshAttemptedRef.current = true;
     } catch {
@@ -8191,12 +8220,18 @@ function MessageImage({
       title="Bấm để xem nhanh ảnh"
     >
       <img
-        src={currentSrc}
+        src={previewFailed ? currentSrc : omniPreviewImageUrl(currentSrc, 480)}
         alt="Ảnh trong hội thoại"
         className="max-h-80 max-w-full rounded-2xl object-contain"
-        loading="eager"
+        loading="lazy"
+        decoding="async"
         referrerPolicy="no-referrer"
         onError={() => {
+          // A missing derivative falls back once to the stored attachment URL.
+          if (!previewFailed && omniPreviewImageUrl(currentSrc, 480) !== currentSrc) {
+            setPreviewFailed(true);
+            return;
+          }
           // URL ảnh Messenger/Facebook CDN có thời hạn. Lần lỗi đầu tiên tự xin URL
           // mới từ Graph API; chỉ hiện nút lỗi nếu Meta cũng không refresh được.
           if (!refreshAttemptedRef.current) {
