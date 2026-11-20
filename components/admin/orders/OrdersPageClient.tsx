@@ -563,6 +563,10 @@ type ParsedNote = {
 };
 
 type NormalizedOrder = AdminOrder & {
+  payments?: Array<{
+    paymentSourceId?: string | null;
+    paymentSource?: { id?: string | null } | null;
+  }>;
   _meta: ParsedNote;
   _createdByName: string;
   _shippingFee: number;
@@ -617,6 +621,7 @@ type OrderFilterPresetFilters = {
   branchFilter: MultiFilterValue;
   orderFilter: MultiFilterValue;
   paymentFilter: MultiFilterValue;
+  paymentSourceFilter?: MultiFilterValue;
   createdByFilter: MultiFilterValue;
   assignedStaffFilter: MultiFilterValue;
   fulfillmentFilter: MultiFilterValue;
@@ -4589,7 +4594,7 @@ export default function OrdersPageClient() {
     };
   }, []);
 
-  const [globalFilterOptions, setGlobalFilterOptions] = useState<{ shippingPartners: string[]; salesChannels: string[] }>({ shippingPartners: [], salesChannels: [] });
+  const [globalFilterOptions, setGlobalFilterOptions] = useState<{ shippingPartners: string[]; salesChannels: string[]; paymentSources?: Array<{ id: string; name: string; code?: string | null; type?: string | null; branchId?: string | null }> }>({ shippingPartners: [], salesChannels: [], paymentSources: [] });
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [printVersion, setPrintVersion] = useState(0);
@@ -4733,6 +4738,8 @@ export default function OrdersPageClient() {
   const [appliedOrderFilter, setAppliedOrderFilter] = useState<MultiFilterValue>(["ALL"]);
   const [paymentFilter, setPaymentFilter] = useState<MultiFilterValue>(["ALL"]);
   const [appliedPaymentFilter, setAppliedPaymentFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [paymentSourceFilter, setPaymentSourceFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedPaymentSourceFilter, setAppliedPaymentSourceFilter] = useState<MultiFilterValue>(["ALL"]);
   const [branchFilter, setBranchFilter] = useState<MultiFilterValue>(initialQueryFilters.branchFilter);
   const [appliedBranchFilter, setAppliedBranchFilter] = useState<MultiFilterValue>(initialQueryFilters.branchFilter);
   const [dateFrom, setDateFrom] = useState("");
@@ -5383,6 +5390,7 @@ export default function OrdersPageClient() {
         const advancedFilters: Array<[string, string[]]> = [
           ["branchIds", selectedBranchIds], ["orderStatuses", selectedOrderStatuses],
           ["paymentStatuses", selectedPaymentStatuses],
+          ["paymentSourceIds", selectedMultiFilterValues(appliedPaymentSourceFilter)],
           ["fulfillmentStatuses", selectedMultiFilterValues(appliedFulfillmentFilter)],
           ["deliveryStatuses", selectedMultiFilterValues(appliedDeliveryStatusFilter)],
           ["salesChannels", selectedMultiFilterValues(appliedSalesChannelFilter)],
@@ -5706,6 +5714,7 @@ export default function OrdersPageClient() {
     appliedBranchFilter,
     appliedOrderFilter,
     appliedPaymentFilter,
+    appliedPaymentSourceFilter,
     appliedCreatedByFilter,
     appliedAssignedStaffFilter,
     appliedFulfillmentFilter,
@@ -5760,6 +5769,7 @@ export default function OrdersPageClient() {
     appliedBranchFilter,
     appliedOrderFilter,
     appliedPaymentFilter,
+    appliedPaymentSourceFilter,
     appliedDateFrom,
     appliedDateTo,
     appliedCreatedByFilter,
@@ -5872,6 +5882,13 @@ export default function OrdersPageClient() {
     );
   }, [normalizedOrders]);
 
+  const paymentSourceOptions = useMemo<MultiFilterOption[]>(() =>
+    (globalFilterOptions.paymentSources || [])
+      .filter(source => !source.branchId || canViewAllOrders || String(source.branchId) === String(currentUser?.branchId || ""))
+      .map(source => ({ value: source.id, label: source.name || source.code || source.type || source.id })),
+    [globalFilterOptions.paymentSources, canViewAllOrders, currentUser?.branchId],
+  );
+
   const salesChannelOptions = useMemo(
     () => uniqueOptions([...globalFilterOptions.salesChannels, ...normalizedOrders.map((o) => o.salesChannel)]),
     [normalizedOrders, globalFilterOptions],
@@ -5940,6 +5957,7 @@ export default function OrdersPageClient() {
       appliedBranchFilter,
       appliedOrderFilter,
       appliedPaymentFilter,
+      appliedPaymentSourceFilter,
       appliedCreatedByFilter,
       appliedAssignedStaffFilter,
       appliedFulfillmentFilter,
@@ -5965,6 +5983,7 @@ export default function OrdersPageClient() {
     setBranchFilter(["ALL"]);
     setOrderFilter(["ALL"]);
     setPaymentFilter(["ALL"]);
+    setPaymentSourceFilter(["ALL"]);
     setCreatedByFilter(["ALL"]);
     setAssignedStaffFilter(["ALL"]);
     setFulfillmentFilter(["ALL"]);
@@ -5987,6 +6006,7 @@ export default function OrdersPageClient() {
     setAppliedBranchFilter(["ALL"]);
     setAppliedOrderFilter(["ALL"]);
     setAppliedPaymentFilter(["ALL"]);
+    setAppliedPaymentSourceFilter(["ALL"]);
     setAppliedCreatedByFilter(["ALL"]);
     setAppliedAssignedStaffFilter(["ALL"]);
     setAppliedFulfillmentFilter(["ALL"]);
@@ -6015,6 +6035,7 @@ export default function OrdersPageClient() {
     setAppliedBranchFilter(branchFilter);
     setAppliedOrderFilter(orderFilter);
     setAppliedPaymentFilter(paymentFilter);
+    setAppliedPaymentSourceFilter(paymentSourceFilter);
     setAppliedDateFrom(dateFrom);
     setAppliedDateTo(dateTo);
     setAppliedQuickDate(quickDate);
@@ -6059,6 +6080,7 @@ export default function OrdersPageClient() {
     branchFilter: normalizeMultiFilterValue(branchFilter),
     orderFilter: normalizeMultiFilterValue(orderFilter),
     paymentFilter: normalizeMultiFilterValue(paymentFilter),
+    paymentSourceFilter: normalizeMultiFilterValue(paymentSourceFilter),
     createdByFilter: normalizeMultiFilterValue(createdByFilter),
     assignedStaffFilter: normalizeMultiFilterValue(assignedStaffFilter),
     fulfillmentFilter: normalizeMultiFilterValue(fulfillmentFilter),
@@ -6108,6 +6130,7 @@ export default function OrdersPageClient() {
     const nextBranchFilter = normalizeMultiFilterValue(filters.branchFilter);
     const nextOrderFilter = normalizeMultiFilterValue(filters.orderFilter);
     const nextPaymentFilter = normalizeMultiFilterValue(filters.paymentFilter);
+    const nextPaymentSourceFilter = normalizeMultiFilterValue(filters.paymentSourceFilter);
     const nextCreatedByFilter = normalizeMultiFilterValue(filters.createdByFilter);
     const nextAssignedStaffFilter = normalizeMultiFilterValue(filters.assignedStaffFilter);
     const nextFulfillmentFilter = normalizeMultiFilterValue(filters.fulfillmentFilter);
@@ -6128,6 +6151,8 @@ export default function OrdersPageClient() {
     setAppliedOrderFilter(nextOrderFilter);
     setPaymentFilter(nextPaymentFilter);
     setAppliedPaymentFilter(nextPaymentFilter);
+    setPaymentSourceFilter(nextPaymentSourceFilter);
+    setAppliedPaymentSourceFilter(nextPaymentSourceFilter);
     setCreatedByFilter(nextCreatedByFilter);
     setAppliedCreatedByFilter(nextCreatedByFilter);
     setAssignedStaffFilter(nextAssignedStaffFilter);
@@ -6203,6 +6228,7 @@ export default function OrdersPageClient() {
     setAppliedBranchFilter(branchFilter);
     setAppliedOrderFilter(orderFilter);
     setAppliedPaymentFilter(paymentFilter);
+    setAppliedPaymentSourceFilter(paymentSourceFilter);
     setAppliedDateFrom(dateFrom);
     setAppliedDateTo(dateTo);
     setAppliedQuickDate(quickDate);
@@ -6282,6 +6308,7 @@ export default function OrdersPageClient() {
     !multiFilterEquals(branchFilter, appliedBranchFilter) ||
     !multiFilterEquals(orderFilter, appliedOrderFilter) ||
     !multiFilterEquals(paymentFilter, appliedPaymentFilter) ||
+    !multiFilterEquals(paymentSourceFilter, appliedPaymentSourceFilter) ||
     dateFrom !== appliedDateFrom ||
     dateTo !== appliedDateTo ||
     quickDate !== appliedQuickDate ||
@@ -6353,6 +6380,12 @@ export default function OrdersPageClient() {
           return String(o.paymentStatus || "") === payment;
         }),
       );
+    }
+
+    if (!isAllMultiFilter(appliedPaymentSourceFilter)) {
+      const ids = selectedMultiFilterValues(appliedPaymentSourceFilter);
+      result = result.filter(o => (Array.isArray(o.payments) ? o.payments : []).some((p: any) =>
+        ids.includes(String(p.paymentSourceId || p.paymentSource?.id || ""))));
     }
 
     if (!isAllMultiFilter(appliedCreatedByFilter)) {
@@ -6536,6 +6569,7 @@ export default function OrdersPageClient() {
     appliedBranchFilter,
     appliedOrderFilter,
     appliedPaymentFilter,
+    appliedPaymentSourceFilter,
     appliedCreatedByFilter,
     appliedAssignedStaffFilter,
     appliedFulfillmentFilter,
@@ -7164,6 +7198,7 @@ export default function OrdersPageClient() {
         if (exchangeReturnStatus !== "ALL") params.set("exchangeReturnStatus", exchangeReturnStatus);
         const excelAdvancedFilters: Array<[string, string[]]> = [
           ["orderStatuses", selectedOrderStatuses], ["paymentStatuses", selectedPaymentStatuses],
+          ["paymentSourceIds", selectedMultiFilterValues(appliedPaymentSourceFilter)],
           ["fulfillmentStatuses", selectedMultiFilterValues(appliedFulfillmentFilter)],
           ["deliveryStatuses", selectedMultiFilterValues(appliedDeliveryStatusFilter)],
           ["salesChannels", selectedMultiFilterValues(appliedSalesChannelFilter)],
@@ -8275,6 +8310,13 @@ getPaidRevenueAmount(o)
                 { value: "FAILED", label: "Lỗi thanh toán" },
               ]}
             />
+            <MultiFilterSelect
+              className="min-w-0"
+              value={paymentSourceFilter}
+              onChange={setPaymentSourceFilter}
+              allLabel="Tất cả phương thức thanh toán"
+              options={paymentSourceOptions}
+            />
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -8871,6 +8913,12 @@ getPaidRevenueAmount(o)
                       { value: "REFUNDED", label: "Đã hoàn tiền" },
                       { value: "FAILED", label: "Thanh toán lỗi" },
                     ]}
+                  />
+                  <MultiFilterSelect
+                    value={paymentSourceFilter}
+                    onChange={setPaymentSourceFilter}
+                    allLabel="Tất cả phương thức thanh toán"
+                    options={paymentSourceOptions}
                   />
 
                   <input

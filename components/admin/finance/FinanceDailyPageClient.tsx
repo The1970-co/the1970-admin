@@ -11,6 +11,21 @@ type QuickRange =
   | "30d"
   | "month"
   | "custom";
+type ExportFilter = {
+  dateFrom: string; dateTo: string; branchId: string; sourceIds: string[]; detailBranch: string; detailSources: string[];
+  flow: FlowFilter; staff: string; status: string; recordType: string;
+  detailDateFrom: string; detailDateTo: string; amountFrom: string; amountTo: string; q: string;
+  columns: string[];
+};
+
+const EXPORT_COLUMNS = [
+  ["time", "Thời gian"], ["code", "Mã đơn/phiếu"], ["customer", "Đối tượng"], ["phone", "SĐT"],
+  ["branch", "Chi nhánh"], ["staff", "Nhân viên"], ["source", "Nguồn tiền"],
+  ["sourceType", "Loại nguồn"], ["flow", "Dòng tiền"], ["recordType", "Loại chứng từ"],
+  ["amount", "Số tiền"], ["status", "Trạng thái"], ["title", "Nội dung"],
+  ["category", "Danh mục"], ["note", "Ghi chú"],
+] as const;
+
 type FlowFilter =
   | "ALL"
   | "RECEIPT"
@@ -703,6 +718,56 @@ export default function FinanceDailyPageClient() {
   const [transactionDateTo, setTransactionDateTo] = useState("");
   const [transactionAmountFrom, setTransactionAmountFrom] = useState("");
   const [transactionAmountTo, setTransactionAmountTo] = useState("");
+
+  const [exportFilters, setExportFilters] = useState<ExportFilter | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+
+  const openExport = () => setExportFilters({
+    dateFrom, dateTo, branchId, sourceIds: [...selectedPaymentSourceIds], detailBranch: transactionBranchFilter, detailSources: [...transactionSourceFilters],
+    flow, staff: staffFilter, status: transactionStatusFilter, recordType: transactionTypeFilter,
+    detailDateFrom: transactionDateFrom, detailDateTo: transactionDateTo,
+    amountFrom: transactionAmountFrom, amountTo: transactionAmountTo, q,
+    columns: EXPORT_COLUMNS.map(([key]) => key),
+  });
+
+  const updateExport = (patch: Partial<ExportFilter>) => {
+    setExportFilters((old) => old ? { ...old, ...patch } : old);
+  };
+
+  const downloadFinanceExcel = async () => {
+    const filters = exportFilters;
+    if (!filters || exportBusy) return;
+    if (!filters.dateFrom || !filters.dateTo || filters.dateFrom > filters.dateTo) {
+      showToast("Không thể xuất Excel", "Chọn khoảng ngày hợp lệ.", "error"); return;
+    }
+    if (!filters.columns.length) {
+      showToast("Không thể xuất Excel", "Chọn ít nhất một cột dữ liệu.", "error"); return;
+    }
+    setExportBusy(true);
+    try {
+      const params = new URLSearchParams({
+        dateFrom: filters.dateFrom, dateTo: filters.dateTo, branchId: filters.branchId,
+        sourceIds: filters.sourceIds.join(","), detailBranch: filters.detailBranch, detailSources: filters.detailSources.join("|"), flow: filters.flow, staff: filters.staff,
+        status: filters.status, recordType: filters.recordType,
+        detailDateFrom: filters.detailDateFrom, detailDateTo: filters.detailDateTo,
+        amountFrom: filters.amountFrom, amountTo: filters.amountTo, q: filters.q,
+        columns: filters.columns.join(","),
+      });
+      const result = await apiJson<{filename:string;base64:string;count:number}>(`/finance/daily/export-excel?${params.toString()}`);
+      const binary = atob(result.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+      const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = result.filename || "The1970_DongTien.xlsx";
+      document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setExportFilters(null);
+      showToast("Đã xuất Excel", `Đã xuất ${result.count} giao dịch khớp bộ lọc.`);
+    } catch (err: any) {
+      showToast("Xuất Excel thất bại", err?.message || "Không lấy được dữ liệu từ core.", "error");
+    } finally { setExportBusy(false); }
+  };
 
   const [branches, setBranches] = useState<any[]>([]);
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
@@ -2106,6 +2171,40 @@ export default function FinanceDailyPageClient() {
         </div>
       ) : null}
 
+      {exportFilters ? (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-5xl max-h-[94vh] overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between gap-3">
+              <div><h2 className="text-xl font-bold">Xuất Excel — Tổng quan dòng tiền</h2>
+                <p className="mt-1 text-sm text-neutral-500">Chọn các điều kiện và cột cần xuất. Dữ liệu được lấy lại từ core theo bộ lọc này.</p></div>
+              <button type="button" onClick={() => setExportFilters(null)} disabled={exportBusy} className="rounded-lg border px-3 py-1 text-xl">×</button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Từ ngày"><input type="date" value={exportFilters.dateFrom} onChange={e=>updateExport({dateFrom:e.target.value})} className="h-10 w-full rounded-lg border px-3" /></Field>
+              <Field label="Đến ngày"><input type="date" value={exportFilters.dateTo} onChange={e=>updateExport({dateTo:e.target.value})} className="h-10 w-full rounded-lg border px-3" /></Field>
+              <Field label="Chi nhánh"><select value={exportFilters.branchId} onChange={e=>updateExport({branchId:e.target.value})} className="h-10 w-full rounded-lg border px-3"><option value="ALL">Tất cả chi nhánh</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name || b.code}</option>)}</select></Field>
+              <Field label="Nguồn tiền"><MultiSelectFilter values={exportFilters.sourceIds} options={paymentSourceOptions} allLabel="Tất cả nguồn tiền" selectedLabel={exportFilters.sourceIds.length ? `${exportFilters.sourceIds.length} nguồn đã chọn` : undefined} onChange={v=>updateExport({sourceIds:v})}/></Field>
+              <Field label="Chi nhánh (lọc chi tiết)"><select value={exportFilters.detailBranch} onChange={e=>updateExport({detailBranch:e.target.value})} className="h-10 w-full rounded-lg border px-3"><option value="ALL">Tất cả chi nhánh</option>{Array.from(new Set([...transactionBranchOptions, ...branches.map(b=>canonicalBranchName(b.name || b.code))])).filter(v=>v && v!=="—").map(v=><option key={v} value={v}>{v}</option>)}</select></Field>
+              <Field label="Nguồn tiền (lọc chi tiết)"><MultiSelectFilter values={exportFilters.detailSources} options={Array.from(new Set([...transactionSourceOptions,...paymentSourceOptions.map(o=>o.label)])).map(v=>({value:v,label:v}))} allLabel="Tất cả nguồn chi tiết" selectedLabel={exportFilters.detailSources.length ? `${exportFilters.detailSources.length} nguồn đã chọn` : undefined} onChange={v=>updateExport({detailSources:v})}/></Field>
+              <Field label="Dòng tiền"><select value={exportFilters.flow} onChange={e=>updateExport({flow:e.target.value as FlowFilter})} className="h-10 w-full rounded-lg border px-3"><option value="ALL">Tất cả dòng tiền</option><option value="RECEIPT">Tiền vào</option><option value="PAYMENT">Tiền ra</option><option value="POS">POS hoàn thành</option><option value="TRANSFER">Chuyển khoản/cọc</option><option value="CASH">Tiền mặt</option><option value="BANK">Ngân hàng</option><option value="OTHER">Nguồn khác</option></select></Field>
+              <Field label="Trạng thái"><select value={exportFilters.status} onChange={e=>updateExport({status:e.target.value})} className="h-10 w-full rounded-lg border px-3"><option value="ALL">Tất cả trạng thái</option>{transactionStatusOptions.map(v=><option key={v} value={v}>{v}</option>)}</select></Field>
+              <Field label="Nhân viên"><select value={exportFilters.staff} onChange={e=>updateExport({staff:e.target.value})} className="h-10 w-full rounded-lg border px-3"><option value="ALL">Tất cả nhân viên</option>{staffOptions.map(v=><option key={v} value={v}>{v}</option>)}</select></Field>
+              <Field label="Loại chứng từ"><select value={exportFilters.recordType} onChange={e=>updateExport({recordType:e.target.value})} className="h-10 w-full rounded-lg border px-3"><option value="ALL">Tất cả</option><option value="ORDER">Đơn hàng</option><option value="VOUCHER">Phiếu thu/chi</option></select></Field>
+              <Field label="Giao dịch từ ngày"><input type="date" value={exportFilters.detailDateFrom} onChange={e=>updateExport({detailDateFrom:e.target.value})} className="h-10 w-full rounded-lg border px-3" /></Field>
+              <Field label="Giao dịch đến ngày"><input type="date" value={exportFilters.detailDateTo} onChange={e=>updateExport({detailDateTo:e.target.value})} className="h-10 w-full rounded-lg border px-3" /></Field>
+              <Field label="Số tiền từ"><input inputMode="numeric" value={exportFilters.amountFrom} onChange={e=>updateExport({amountFrom:e.target.value.replace(/[^\d]/g,"")})} placeholder="Không giới hạn" className="h-10 w-full rounded-lg border px-3" /></Field>
+              <Field label="Số tiền đến"><input inputMode="numeric" value={exportFilters.amountTo} onChange={e=>updateExport({amountTo:e.target.value.replace(/[^\d]/g,"")})} placeholder="Không giới hạn" className="h-10 w-full rounded-lg border px-3" /></Field>
+              <div className="sm:col-span-2 lg:col-span-4"><Field label="Tìm kiếm mã đơn, phiếu, khách, SĐT, nhân viên, nội dung, ghi chú"><input value={exportFilters.q} onChange={e=>updateExport({q:e.target.value})} className="h-10 w-full rounded-lg border px-3" placeholder="Để trống để lấy tất cả" /></Field></div>
+            </div>
+            <div className="mt-5 border-t pt-4">
+              <div className="mb-3 flex items-center justify-between gap-2"><h3 className="font-bold">Cột dữ liệu trong Excel</h3><div className="flex gap-2"><button type="button" onClick={()=>updateExport({columns:EXPORT_COLUMNS.map(([key])=>key)})} className="rounded-lg border px-3 py-1 text-sm">Chọn tất cả</button><button type="button" onClick={()=>updateExport({columns:[]})} className="rounded-lg border px-3 py-1 text-sm">Bỏ chọn</button></div></div>
+              <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">{EXPORT_COLUMNS.map(([key,label])=><label key={key} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={exportFilters.columns.includes(key)} onChange={()=>updateExport({columns:exportFilters.columns.includes(key) ? exportFilters.columns.filter(c=>c!==key) : [...exportFilters.columns,key]})}/>{label}</label>)}</div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2 border-t pt-4"><button type="button" onClick={()=>setExportFilters(null)} disabled={exportBusy} className="rounded-xl border px-5 py-3 text-sm font-semibold">Huỷ</button><button type="button" onClick={()=>void downloadFinanceExcel()} disabled={exportBusy || !exportFilters.columns.length} className="rounded-xl bg-black px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{exportBusy ? "Đang xuất..." : "Xuất Excel (.xlsx)"}</button></div>
+          </div>
+        </div>
+      ) : null}
+
       {confirmDialog ? (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
           <div className="w-full max-w-lg overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-2xl">
@@ -3363,9 +3462,7 @@ export default function FinanceDailyPageClient() {
                 Gồm POS hoàn thành, phiếu thu/chi, chuyển khoản/cọc đã ghi nhận.
               </p>
             </div>
-            <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">
-              {rows.length} dòng
-            </span>
+            <div className="flex items-center gap-3"><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">{rows.length} dòng</span><button type="button" onClick={openExport} className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-semibold text-white">Xuất Excel</button></div>
           </div>
         </div>
 
