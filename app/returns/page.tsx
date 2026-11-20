@@ -130,6 +130,14 @@ function ReturnsPageClient() {
 
   const [returnRows, setReturnRows] = useState<ReturnRow[]>([]);
   const [returnQ, setReturnQ] = useState("");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [returnStatus, setReturnStatus] = useState("ALL");
+  const [returnType, setReturnType] = useState("ALL");
+  const [returnBranch, setReturnBranch] = useState("ALL");
+  const [returnStaff, setReturnStaff] = useState("");
+  const [returnFrom, setReturnFrom] = useState("");
+  const [returnTo, setReturnTo] = useState("");
+  const [branchOptions, setBranchOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [returnLoading, setReturnLoading] = useState(false);
 
   const [selectedReturnId, setSelectedReturnId] = useState("");
@@ -171,6 +179,12 @@ function ReturnsPageClient() {
 
       const params = new URLSearchParams();
       if (returnQ.trim()) params.set("q", returnQ.trim());
+      if (returnStatus !== "ALL") params.set("status", returnStatus);
+      if (returnType !== "ALL") params.set("type", returnType);
+      if (returnBranch !== "ALL") params.set("branchId", returnBranch);
+      if (returnStaff.trim()) params.set("staff", returnStaff.trim());
+      if (returnFrom) params.set("from", returnFrom);
+      if (returnTo) params.set("to", returnTo);
 
       const json = await apiGet(`/returns?${params.toString()}`);
 
@@ -205,6 +219,12 @@ function ReturnsPageClient() {
 
   useEffect(() => {
     void loadReturns();
+    void apiGet("/branches").then((json) => {
+      const list = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
+      setBranchOptions(list.filter((item: any) => item?.id).map((item: any) => ({
+        id: String(item.id), name: String(item.name || item.code || item.id),
+      })));
+    }).catch(() => {});
   }, []);
 
   const returnItems = (detail?.items || []).filter((item) => item.itemType !== "EXCHANGE");
@@ -343,6 +363,11 @@ function ReturnsPageClient() {
                 placeholder="Tìm mã phiếu..."
                 className="h-10 w-[220px] rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-900"
               />
+              <button type="button" onClick={() => setFilterOpen((value) => !value)}
+                aria-expanded={filterOpen}
+                className={`h-10 rounded-2xl border px-4 text-xs font-bold ${filterOpen ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
+                Bộ lọc {filterOpen ? "▴" : "▾"}
+              </button>
               <button
                 type="button"
                 onClick={loadReturns}
@@ -353,6 +378,39 @@ function ReturnsPageClient() {
               </button>
             </div>
           </div>
+          {filterOpen ? (
+            <div className="grid gap-3 border-b border-neutral-200 bg-neutral-50/60 px-5 py-4 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="text-xs font-semibold text-neutral-600">Trạng thái
+                <select value={returnStatus} onChange={(e) => setReturnStatus(e.target.value)} className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm">
+                  <option value="ALL">Tất cả</option><option value="PENDING">Chờ nhận hàng</option><option value="COMPLETED">Hoàn thành</option><option value="CANCELLED">Đã hủy</option><option value="DRAFT">Nháp</option>
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-neutral-600">Loại phiếu
+                <select value={returnType} onChange={(e) => setReturnType(e.target.value)} className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm">
+                  <option value="ALL">Tất cả</option><option value="RETURN">Trả hàng</option><option value="RETURN_EXCHANGE">Đổi hàng</option>
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-neutral-600">Chi nhánh nhận
+                <select value={returnBranch} onChange={(e) => setReturnBranch(e.target.value)} className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm">
+                  <option value="ALL">Tất cả chi nhánh</option>{branchOptions.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-neutral-600">Nhân viên xử lý
+                <input value={returnStaff} onChange={(e) => setReturnStaff(e.target.value)} placeholder="Tên nhân viên" className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm" />
+              </label>
+              <label className="text-xs font-semibold text-neutral-600">Từ ngày
+                <input type="date" value={returnFrom} onChange={(e) => setReturnFrom(e.target.value)} className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm" />
+              </label>
+              <label className="text-xs font-semibold text-neutral-600">Đến ngày
+                <input type="date" min={returnFrom || undefined} value={returnTo} onChange={(e) => setReturnTo(e.target.value)} className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm" />
+              </label>
+              <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-3">
+                <button type="button" onClick={() => void loadReturns()} disabled={returnLoading} className="rounded-xl bg-neutral-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Áp dụng bộ lọc</button>
+                <button type="button" onClick={() => { setReturnQ(""); setReturnStatus("ALL"); setReturnType("ALL"); setReturnBranch("ALL"); setReturnStaff(""); setReturnFrom(""); setReturnTo(""); }} className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-xs font-semibold">Xóa bộ lọc</button>
+                <span className="text-xs text-neutral-500">{returnRows.length} phiếu đang hiển thị</span>
+              </div>
+            </div>
+          ) : null}
 
           <div className="overflow-auto">
             <div className="grid min-w-[1080px] grid-cols-[150px_150px_110px_120px_120px_120px_130px_150px_1fr] bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase text-neutral-500">
