@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   getBranches,
   getProducts,
@@ -296,6 +296,16 @@ export default function PurchaseReceiptsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [expandedReceiptIds, setExpandedReceiptIds] = useState<string[]>([]);
+  // Giữ nguyên vị trí nhìn khi thao tác với phiếu giữa danh sách.
+  const pendingScrollY = useRef<number | null>(null);
+  const [scrollRestoreVersion, setScrollRestoreVersion] = useState(0);
+
+  useLayoutEffect(() => {
+    if (pendingScrollY.current === null) return;
+    const position = pendingScrollY.current;
+    pendingScrollY.current = null;
+    window.scrollTo({ top: position, behavior: "auto" });
+  }, [scrollRestoreVersion]);
 
   const currentUser = getCurrentUserFromStorage();
   const createdById = currentUser?.id || undefined;
@@ -842,6 +852,20 @@ export default function PurchaseReceiptsPageClient() {
     }
   }
 
+  // Các thao tác chỉ tải lại danh sách phiếu, KHÔNG bật màn loading toàn trang,
+  // không tải lại danh mục/sản phẩm/NCC và không reset bộ lọc hoặc vị trí cuộn.
+  async function refreshReceiptsInPlace() {
+    const scrollY = window.scrollY;
+    try {
+      const receiptsData = await getPurchaseReceipts();
+      pendingScrollY.current = scrollY;
+      setRows(Array.isArray(receiptsData) ? receiptsData : []);
+      setScrollRestoreVersion((version) => version + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không cập nhật được danh sách phiếu nhập.");
+    }
+  }
+
   useEffect(() => {
     void loadAll();
   }, []);
@@ -1151,7 +1175,7 @@ export default function PurchaseReceiptsPageClient() {
       }
 
       closeForm();
-      await loadAll();
+      await refreshReceiptsInPlace();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không lưu được phiếu nhập.");
     } finally {
@@ -1187,7 +1211,7 @@ export default function PurchaseReceiptsPageClient() {
 
       setNotice("Đã ghi nhận thanh toán nhà cung cấp.");
       closePayment();
-      await loadAll();
+      await refreshReceiptsInPlace();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không thanh toán được phiếu nhập.");
     } finally {
@@ -1202,7 +1226,7 @@ export default function PurchaseReceiptsPageClient() {
       setNotice(null);
       await requestPaymentPurchaseReceipt(id);
       setNotice("Đã xác nhận đủ hàng.");
-      await loadAll();
+      await refreshReceiptsInPlace();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không xác nhận được phiếu nhập.");
     } finally {
@@ -1217,7 +1241,7 @@ export default function PurchaseReceiptsPageClient() {
       setNotice(null);
       await importStockPurchaseReceipt(id, createdById);
       setNotice("Đã nhập kho thành công.");
-      await loadAll();
+      await refreshReceiptsInPlace();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không nhập kho được.");
     } finally {
@@ -1232,7 +1256,7 @@ export default function PurchaseReceiptsPageClient() {
       setNotice(null);
       await completePurchaseReceipt(id);
       setNotice("Đã hoàn tất thanh toán đơn nhập.");
-      await loadAll();
+      await refreshReceiptsInPlace();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không hoàn tất được đơn nhập.");
     } finally {
@@ -1250,7 +1274,7 @@ export default function PurchaseReceiptsPageClient() {
       setNotice(null);
       await cancelPurchaseReceipt(id);
       setNotice("Đã hủy phiếu nhập.");
-      await loadAll();
+      await refreshReceiptsInPlace();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không hủy được phiếu nhập.");
     } finally {
@@ -1327,7 +1351,7 @@ export default function PurchaseReceiptsPageClient() {
           <button
             type="button"
             onClick={() => setShowAdvancedFilters((prev) => !prev)}
-            className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+            className="whitespace-nowrap rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-900 hover:bg-neutral-50"
           >
             {showAdvancedFilters ? "Thu gọn bộ lọc" : "Mở rộng bộ lọc"}
           </button>
@@ -1472,7 +1496,16 @@ export default function PurchaseReceiptsPageClient() {
         </Panel>
       ) : null}
 
-      <div className="space-y-3">
+      <div className="space-y-2 overflow-x-auto">
+        {!loading && filteredRows.length > 0 ? (
+          <div className="flex min-w-[1660px] items-center gap-3 rounded-xl bg-neutral-100 px-3 py-2 text-[11px] font-semibold uppercase text-neutral-500">
+            <div className="grid min-w-0 flex-1 grid-cols-[116px_195px_120px_132px_92px_128px_125px_160px] gap-3">
+              <span>Phiếu nhập</span><span>Nhà cung cấp</span><span>Kho nhập</span><span>Ngày tạo</span>
+              <span>SL / SKU</span><span>Tổng tiền</span><span>Công nợ</span><span>Trạng thái</span>
+            </div>
+            <span className="w-[430px] text-right">Thao tác</span>
+          </div>
+        ) : null}
         {loading ? (
           <Panel className="p-4">
             <p className="text-sm text-neutral-500">Đang tải phiếu nhập...</p>
@@ -1493,63 +1526,45 @@ export default function PurchaseReceiptsPageClient() {
 
             return (
               <Panel key={receipt.id}>
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 p-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openReceiptInNewTab(receipt)}
-                        className="text-left text-sm font-semibold text-neutral-900 underline-offset-4 hover:underline"
-                        title="Mở phiếu nhập ở tab mới"
-                      >
-                        {receipt.receiptCode}
-                      </button>
-
+                <div className="flex min-w-[1660px] items-center gap-3 px-3 py-2.5">
+                  <div className="grid min-w-0 flex-1 grid-cols-[116px_195px_120px_132px_92px_128px_125px_160px] items-center gap-3 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => openReceiptInNewTab(receipt)}
+                      className="truncate text-left font-bold text-neutral-900 hover:underline"
+                      title="Mở phiếu nhập ở tab mới"
+                    >
+                      {receipt.receiptCode}
+                    </button>
+                    <div className="truncate font-medium text-neutral-800" title={receipt.supplier?.name || "—"}>
+                      {receipt.supplier?.name || "—"}
+                    </div>
+                    <div className="truncate text-neutral-600" title={receipt.branch?.name || "—"}>
+                      {receipt.branch?.name || "—"}
+                    </div>
+                    <div className="whitespace-nowrap text-neutral-500">{formatDateTime(getReceiptCreatedAt(receipt))}</div>
+                    <div className="whitespace-nowrap text-neutral-700" title={`${receiptItems.length} SKU`}>
+                      {receiptQty} SP · {receiptItems.length} SKU
+                    </div>
+                    <div className="whitespace-nowrap font-semibold text-neutral-800">{canViewCost ? currency(receiptAmount) : "—"}</div>
+                    <div className="whitespace-nowrap text-neutral-600" title={`Đã trả: ${currency(paidAmount)}`}>
+                      {canViewCost ? `Nợ: ${currency(Math.max(receiptAmount - paidAmount, 0))}` : "—"}
+                    </div>
+                    <div className="flex min-w-0 flex-wrap gap-1">
                       <Badge tone={getReceiptStatusTone(receipt.status)}>
                         {getReceiptStatusLabel(receipt.status, isAdmin)}
                       </Badge>
-
-                      {receipt.status !== "STOCK_IMPORTED" &&
-                      receipt.status !== "DRAFT" &&
-                      receipt.status !== "CANCELLED" ? (
-                        <Badge tone={stockImported ? "blue" : "amber"}>
-                          {stockImported ? "Kho: Đã nhập" : "Kho: Chờ nhập"}
-                        </Badge>
+                      {receipt.status !== "DRAFT" && receipt.status !== "CANCELLED" && receipt.status !== "STOCK_IMPORTED" ? (
+                        <Badge tone={stockImported ? "blue" : "amber"}>{stockImported ? "Đã nhập kho" : "Chờ nhập kho"}</Badge>
                       ) : null}
-                    </div>
-
-                    <div className="mt-2 space-y-1 text-xs text-neutral-500">
-                      <p>Kho nhập: {receipt.branch?.name || "—"}</p>
-                      {canViewCost ? <p>Nhà cung cấp: {receipt.supplier?.name || "—"}</p> : null}
-                      <p>Người nhập: {getCreatedByName(receipt)}</p>
-                      <p>Ngày tạo: {formatDateTime(getReceiptCreatedAt(receipt))}</p>
-                      <p>Ngày nhập kho/hoàn tất: {formatDateTime(getReceiptImportedAt(receipt))}</p>
-                      <p>Tổng số lượng: {receiptQty}</p>
-                      <p>
-                        Số dòng SKU: {receiptItems.length}
-                        {receiptItems.length ? (
-                          <span className="ml-1 text-neutral-400">
-                            · {receiptItems.slice(0, 3).map((line) => line.sku).join(", ")}
-                            {receiptItems.length > 3 ? "..." : ""}
-                          </span>
-                        ) : null}
-                      </p>
-                      {canViewCost ? <p>Tổng tiền: {currency(receiptAmount)}</p> : null}
-                      {canViewCost ? <p>Đã thanh toán: {currency(paidAmount)}</p> : null}
-                      {canViewCost ? <p>Còn phải trả: {currency(Math.max(receiptAmount - paidAmount, 0))}</p> : null}
-                      {canImportStockReceipt && paidEnough && !stockImported ? (
-                        <p className="font-medium text-green-700">Đã thanh toán đủ · chờ nhập kho</p>
-                      ) : null}
-                      {receipt.note ? <p>Ghi chú: {receipt.note}</p> : null}
                     </div>
                   </div>
-
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex w-[430px] shrink-0 flex-wrap items-center justify-end gap-1.5">
                     <a
                       href={`/control/purchase-receipts/${receipt.id}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="rounded-xl border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+                      className="whitespace-nowrap rounded-lg border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-neutral-800"
                     >
                       Mở tab mới
                     </a>
@@ -1557,7 +1572,7 @@ export default function PurchaseReceiptsPageClient() {
                     <button
                       type="button"
                       onClick={() => toggleReceiptExpanded(receipt.id)}
-                      className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+                      className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-900 hover:bg-neutral-50"
                     >
                       {expanded ? "Thu gọn nhanh" : "Xem nhanh"}
                     </button>
@@ -1569,7 +1584,7 @@ export default function PurchaseReceiptsPageClient() {
                           <button
                             type="button"
                             onClick={() => openEdit(receipt)}
-                            className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+                            className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-900 hover:bg-neutral-50"
                           >
                             Sửa phiếu
                           </button>
@@ -1580,7 +1595,7 @@ export default function PurchaseReceiptsPageClient() {
                             type="button"
                             onClick={() => void handleRequestPayment(receipt.id)}
                             disabled={importingId === receipt.id}
-                            className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                            className={`rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                               }`}
                           >
                             {importingId === receipt.id ? "Đang xác nhận..." : "Xác nhận đủ hàng"}
@@ -1592,7 +1607,7 @@ export default function PurchaseReceiptsPageClient() {
                             type="button"
                             onClick={() => void handleCancel(receipt.id)}
                             disabled={cancellingId === receipt.id}
-                            className={`rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 ${cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                            className={`rounded-lg border border-red-300 bg-red-50 px-2.5 py-1.5 text-[11px] font-medium text-red-700 ${cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                               }`}
                           >
                             {cancellingId === receipt.id ? "Đang hủy..." : "Hủy"}
@@ -1607,7 +1622,7 @@ export default function PurchaseReceiptsPageClient() {
                       <a
                         href={`/finance/supplier-payments?receiptId=${receipt.id}`}
                         target="_blank"
-                        className="rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-700"
+                        className="rounded-lg border border-green-300 bg-green-50 px-2.5 py-1.5 text-[11px] font-medium text-green-700"
                       >
                         Mở phiếu thanh toán
                       </a>
@@ -1619,7 +1634,7 @@ export default function PurchaseReceiptsPageClient() {
                       <button
                         onClick={() => void handleImportStock(receipt.id)}
                         disabled={importingId === receipt.id}
-                        className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                        className={`rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                           }`}
                       >
                         {importingId === receipt.id ? "Đang nhập kho..." : "Nhập kho"}
@@ -1633,7 +1648,7 @@ export default function PurchaseReceiptsPageClient() {
                       <button
                         onClick={() => void handleComplete(receipt.id)}
                         disabled={completingId === receipt.id}
-                        className={`rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 ${completingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                        className={`rounded-lg border border-green-300 bg-green-50 px-2.5 py-1.5 text-[11px] font-medium text-green-700 ${completingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                           }`}
                       >
                         {completingId === receipt.id ? "Đang hoàn tất..." : "Hoàn tất"}
