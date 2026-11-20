@@ -134,6 +134,7 @@ export default function MobileAutopilotPage() {
   const [showPauseHistory, setShowPauseHistory] = useState(true);
   const [managerBusyId, setManagerBusyId] = useState("");
   const [selectedLevel, setSelectedLevel] = useState<AutomationLevel>("manual");
+  const [showLevelExplanation, setShowLevelExplanation] = useState(false);
   const [postFilter, setPostFilter] = useState<"all" | "no_ad" | "has_ad">("no_ad");
   const [mappingOptions, setMappingOptions] = useState<AnyRow[]>([]);
   const [manualProductByPost, setManualProductByPost] = useState<Record<string, string>>({});
@@ -228,6 +229,25 @@ export default function MobileAutopilotPage() {
     } finally {
       setInsightLoadingKey("");
     }
+  }
+
+  function adMessageCost(ad: AnyRow) {
+    const id = String(ad.metaAdId || ad.adId || ad.id || "");
+    const insight = insightsByRange[managerRange]?.[id];
+    const m = insight?.metrics || insight || null;
+    // Ưu tiên giá mỗi cuộc hội thoại bắt đầu (Meta Ads Manager).
+    // Không lấy số tin bất kỳ để chia khi thiếu kết quả.
+    const fromMetrics = (data: AnyRow | null | undefined) => {
+      if (!data) return 0;
+      const direct = num(data.costPerConversation ?? data.costPerResult ?? data.costPerMessage);
+      if (direct > 0) return direct;
+      const results = num(data.conversationStarts ?? data.metaResultStartedChat);
+      const spend = num(data.spend);
+      return results > 0 && spend > 0 ? spend / results : 0;
+    };
+    if (insightsByRange[managerRange]) return { value: fromMetrics(m), label: insightRangeLabel(managerRange) };
+    const fallback = fromMetrics(ad.metrics || ad);
+    return { value: fallback, label: "dữ liệu gần nhất" };
   }
 
   function insightForAd(adId: string) {
@@ -355,19 +375,19 @@ export default function MobileAutopilotPage() {
       setPauseTotalQty(num(inv?.pauseTotalQty) || 40);
       setRequireBoth(inv?.requireBoth !== false);
 
-      // Assessment của BE phải dùng nguyên engine giống web, nhưng không được
-      // gửi 500 ads trong MỘT request (CPU/timeouts trên Railway).
-      // Ưu tiên Ads đang chạy và các Ads có cảnh báo; sau đó nạp tuần tự
-      // các lô còn lại mà không giữ màn hình chờ hoặc xóa kết quả đã có.
-      if (adRows.length) {
+      // Tồn kho cần quét thường xuyên chỉ với Ads đang thực sự phân phối.
+      // Các Ads PAUSED vẫn giữ trong bảng quản lý, lịch sử và có thể mở chi tiết,
+      // nhưng không gửi hàng trăm Ads đã tắt vào inventory/assess mỗi lần refresh.
+      const assessableAds = adRows.filter((ad: AnyRow) =>
+        String(ad.effectiveStatus || ad.status || "").toUpperCase() === "ACTIVE"
+      );
+      if (assessableAds.length) {
         const priority = (ad: AnyRow) => {
-          const status = String(ad.effectiveStatus || ad.status || "").toUpperCase();
           const stock = String(ad.stockLevel || "").toUpperCase();
-          return (status === "ACTIVE" ? 100 : 0) +
-            (["CRITICAL", "FAMILY_LOW_STOCK", "LOW_STOCK"].includes(stock) ? 40 : 0) +
+          return (["CRITICAL", "FAMILY_LOW_STOCK", "LOW_STOCK"].includes(stock) ? 40 : 0) +
             (ad.manualProductCode || ad.manualMapping?.productCode ? 10 : 0);
         };
-        const sorted = [...adRows].sort((a, b) => priority(b) - priority(a));
+        const sorted = [...assessableAds].sort((a, b) => priority(b) - priority(a));
         const compactAds = sorted.map((ad: AnyRow) => ({
           metaAdId: String(ad.metaAdId || ad.adId || ad.id || ""),
           id: String(ad.metaAdId || ad.adId || ad.id || ""),
@@ -381,7 +401,7 @@ export default function MobileAutopilotPage() {
           manualColor: ad.manualColor || ad.manualMapping?.color || null,
           manualMapping: ad.manualMapping || null,
         }));
-        const BATCH_SIZE = 40;
+        const BATCH_SIZE = 25;
         const chunks: AnyRow[][] = [];
         for (let i = 0; i < compactAds.length; i += BATCH_SIZE) chunks.push(compactAds.slice(i, i + BATCH_SIZE));
         setAssessmentProgress({ done: 0, total: compactAds.length });
@@ -435,14 +455,14 @@ export default function MobileAutopilotPage() {
           const budgetRows: any = await apiJson("/meta-ads/autopilot/budgets", {
             method: "POST",
             body: JSON.stringify({
-              metaAdSetIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaAdSetId || x.adSetId || "")).filter(Boolean))),
-              metaCampaignIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaCampaignId || x.campaignId || "")).filter(Boolean))),
+              metaAdSetIds: Array.from(new Set(assessableAds.map((x: AnyRow) => String(x.metaAdSetId || x.adSetId || "")).filter(Boolean))),
+              metaCampaignIds: Array.from(new Set(assessableAds.map((x: AnyRow) => String(x.metaCampaignId || x.campaignId || "")).filter(Boolean))),
             }),
           });
           if (assessmentRequestId.current === requestId) setBudgets({ adSets: budgetRows?.adSets || [], campaigns: budgetRows?.campaigns || [] });
         } catch (e) { /* Giữ nguyên budget có sẵn trong dữ liệu Meta. */ }
       } else {
-        setAssessments({});
+        setAssessmentProgress(null);
         setAssessmentError("");
         setAssessmentProgress(null);
         setBudgets({ adSets: [], campaigns: [] });
@@ -546,7 +566,10 @@ export default function MobileAutopilotPage() {
   }
 
   const activeAds = liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE" && Boolean(String(x.thumbnailUrl || x.thumbnail_url || "").trim()));
-  const criticalAds = liveAds.filter((x) => ["CRITICAL", "FAMILY_LOW_STOCK"].includes(String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase()));
+  const criticalAds = liveAds.filter((x) =>
+    String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE" &&
+    ["CRITICAL", "FAMILY_LOW_STOCK"].includes(String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase())
+  );
   const readyPosts = launchPosts.filter((x) => ["READY", "CREATED_PAUSED"].includes(String(x.state || "").toUpperCase()));
   const operationalAds = liveAds.filter((row) => {
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
@@ -1216,7 +1239,7 @@ export default function MobileAutopilotPage() {
           </div>
           <div className="mt-5 grid grid-cols-3 gap-2">
             <div className="rounded-2xl bg-white/10 p-3"><div className="text-[10px] text-neutral-400">Ads active</div><div className="mt-1 text-xl font-black">{activeAds.length}</div></div>
-            <div className="rounded-2xl bg-white/10 p-3"><div className="text-[10px] text-neutral-400">Critical</div><div className="mt-1 text-xl font-black">{criticalAds.length}</div></div>
+            <div className="rounded-2xl bg-white/10 p-3"><div className="text-[10px] text-neutral-400">Critical ACTIVE</div><div className="mt-1 text-xl font-black">{criticalAds.length}</div></div>
             <div className="rounded-2xl bg-white/10 p-3"><div className="text-[10px] text-neutral-400">Chờ duyệt</div><div className="mt-1 text-xl font-black">{readyPosts.length}</div></div>
           </div>
         </section>
@@ -1232,11 +1255,14 @@ export default function MobileAutopilotPage() {
               </button>
             ))}
           </div>
-          <div className="mt-3 rounded-2xl bg-neutral-50 p-3">
-            <div className="text-sm font-black">{levelInfo[selectedLevel].title}</div>
-            <div className="mt-1 text-[11px] leading-5 text-neutral-500">{levelInfo[selectedLevel].desc}</div>
+          <button type="button" onClick={() => setShowLevelExplanation(v => !v)} className="mt-3 flex w-full items-center justify-between rounded-2xl bg-neutral-50 px-3 py-3 text-left text-xs font-bold text-neutral-700" aria-expanded={showLevelExplanation}>
+            <span>{levelInfo[selectedLevel].title} · {showLevelExplanation ? "Ẩn giải thích" : "Xem giải thích"}</span>
+            {showLevelExplanation ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {showLevelExplanation ? <div className="mt-2 rounded-2xl bg-neutral-50 p-3">
+            <div className="text-[11px] leading-5 text-neutral-500">{levelInfo[selectedLevel].desc}</div>
             <div className="mt-2 space-y-1">{levelInfo[selectedLevel].points.map((p) => <div key={p} className="text-[11px] font-semibold text-neutral-600">• {p}</div>)}</div>
-          </div>
+          </div> : null}
           <button disabled={busy || selectedLevel === level} onClick={() => void changeLevel(selectedLevel)} className="mt-3 h-11 w-full rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:bg-neutral-200 disabled:text-neutral-500">
             {selectedLevel === level ? `Đang bật ${levelInfo[level].title}` : `Bật ${levelInfo[selectedLevel].title}`}
           </button>
@@ -1390,6 +1416,10 @@ export default function MobileAutopilotPage() {
               return <div key={g.id} className="rounded-2xl border border-neutral-200 bg-white p-4">
                 <div className="flex items-start justify-between gap-2"><div className="min-w-0 flex-1 text-sm font-black">{g.name}</div><button disabled={Boolean(managerBusyId) || busy || !/^\d+$/.test(g.id)} onClick={() => void setGroupStatus(g.id, groupStatus === "ACTIVE" ? "PAUSED" : "ACTIVE")} className={`shrink-0 rounded-xl px-2 py-2 text-[10px] font-black ${groupStatus === "ACTIVE" ? "bg-emerald-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>{groupStatus === "ACTIVE" ? "● Bật · Tắt" : "○ Tắt · Bật"}</button></div>
                 <div className="mt-1 text-[11px] text-neutral-500">{g.rows.length} Ads · {active} đang bật · {g.rows.length-active} tắt · Chi tiêu: {money(metrics)}</div>
+                <div className="mt-1 text-[11px] font-bold text-sky-700">CP / tin nhắn: {(() => {
+                  const allResults = g.rows.reduce((sum, ad) => sum + num(insightsByRange[managerRange]?.[String(ad.metaAdId || ad.id)]?.metrics?.conversationStarts), 0);
+                  return allResults > 0 ? money(metrics / allResults) : "—";
+                })()}</div>
                 <button onClick={() => { setManagerLevel("ad"); setAdFilter("all"); }} className="mt-2 text-[11px] font-black underline">Xem quảng cáo</button>
               </div>;
             })}
@@ -1445,6 +1475,9 @@ export default function MobileAutopilotPage() {
                 {row.thumbnailUrl || row.thumbnail_url ? <img src={row.thumbnailUrl || row.thumbnail_url} alt="" className="h-20 w-20 rounded-2xl object-cover bg-neutral-100" /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="line-clamp-2 text-sm font-black leading-5">{row.adName || row.name || row.ad_name || `Ad ${String(row.metaAdId || row.id || "").slice(-6)}`}</div>
+                  <div className="mt-1 text-[11px] font-bold text-sky-700">
+                    CP / tin nhắn ({adMessageCost(row).label}): {adMessageCost(row).value > 0 ? money(adMessageCost(row).value) : "—"}
+                  </div>
                   <div className="mt-1 flex flex-wrap items-center gap-1">
                     <Badge value={status}>{status}</Badge>
                     <button disabled={busy || managerBusyId === id} onClick={() => { const configured = String(row.status || status).toUpperCase(); if (window.confirm(configured === "ACTIVE" ? "Tắt quảng cáo này trên Meta?" : "Bật quảng cáo này trên Meta?")) void setAdStatus(row, configured === "ACTIVE" ? "PAUSED" : "ACTIVE"); }} className={`rounded-lg px-2 py-1 text-[10px] font-black ${status === "ACTIVE" ? "bg-emerald-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>{status === "ACTIVE" ? "● Bật · Tắt" : "○ Tắt · Bật"}</button>

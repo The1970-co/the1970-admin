@@ -2209,6 +2209,7 @@ export default function ProductsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
   const [imagePreview, setImagePreview] = useState<ProductImagePreviewState | null>(null);
+  const [quickViewProduct, setQuickViewProduct] = useState<ProductItem | null>(null);
   const [showCostPrices, setShowCostPrices] = useState(false);
 
   const [role, setRole] = useState<AppRole>("retail-staff");
@@ -5158,6 +5159,43 @@ export default function ProductsPageClient() {
         </Panel>
       ) : null}
 
+      {quickViewProduct ? (() => {
+        const product = quickViewProduct;
+        const variants = product.variants || [];
+        const colors = new Map<string, { qty: number; sizes: Map<string, number> }>();
+        const bySize = new Map<string, number>();
+        variants.forEach((v) => {
+          const color = String(v.color || "Khác").trim();
+          const size = String(v.size || "Khác").trim();
+          const qty = getVariantScopedStock(v);
+          if (!colors.has(color)) colors.set(color, { qty: 0, sizes: new Map() });
+          const group = colors.get(color)!;
+          group.qty += qty;
+          group.sizes.set(size, (group.sizes.get(size) || 0) + qty);
+          bySize.set(size, (bySize.get(size) || 0) + qty);
+        });
+        return (
+          <div className="fixed inset-0 z-[100] flex justify-end bg-black/40" onMouseDown={(e) => { if (e.target === e.currentTarget) setQuickViewProduct(null); }}>
+            <div role="dialog" aria-modal="true" aria-label={`Xem nhanh ${product.name}`} className="flex h-full w-full max-w-[580px] flex-col bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b p-4">
+                <div className="min-w-0"><div className="text-xs text-neutral-500">XEM NHANH SẢN PHẨM</div><h3 className="truncate text-lg font-semibold">{product.name}</h3><div className="text-xs text-neutral-500">{getMainSku(product)} · {variants.length} SKU</div></div>
+                <button type="button" onClick={() => setQuickViewProduct(null)} className="rounded-full border px-3 py-2 text-sm">Đóng ×</button>
+              </div>
+              <div className="flex-1 space-y-5 overflow-y-auto p-4">
+                <div className="flex items-center gap-4 rounded-xl bg-neutral-50 p-3">
+                  {product.imageUrl ? <img src={toAbsoluteFileUrl(product.imageUrl)} alt={product.name} className="h-24 w-24 rounded-xl object-cover" /> : null}
+                  <div><div className="text-sm text-neutral-500">{product.category || "Chưa phân loại"}</div><div className="mt-1 text-xl font-bold">{variants.reduce((s,v)=>s+getVariantScopedStock(v),0)} sản phẩm tồn</div><div className="text-sm text-neutral-500">{colors.size} màu · {bySize.size} size</div></div>
+                </div>
+                <section><h4 className="mb-2 font-semibold">Tồn theo màu / size</h4><div className="space-y-2">{Array.from(colors.entries()).map(([color, group]) => <div key={color} className="rounded-xl border border-neutral-200 p-3"><div className="flex justify-between font-semibold"><span>{color}</span><span className={group.qty > 0 ? "text-emerald-700" : "text-amber-700"}>{group.qty}</span></div><div className="mt-2 flex flex-wrap gap-1.5">{Array.from(group.sizes.entries()).map(([size,qty]) => <span key={size} className="rounded-full bg-neutral-100 px-2 py-1 text-xs">{size}: <b>{qty}</b></span>)}</div></div>)}</div></section>
+                <section><h4 className="mb-2 font-semibold">Tồn theo chi nhánh</h4><div className="grid grid-cols-2 gap-2">{visibleBranches.map(branch => <div key={branch.id} className="rounded-xl bg-neutral-50 p-3 text-sm"><div className="text-neutral-500">{branch.name}</div><b>{variants.reduce((s,v)=>s+Number(v.branchStocks?.[branch.id] || 0),0)}</b></div>)}</div></section>
+                <section><h4 className="mb-2 font-semibold">Tất cả SKU</h4><div className="space-y-1">{variants.map(v => <div key={v.id} className="flex items-center justify-between gap-2 border-b py-2 text-xs"><span>{v.sku} · {v.color || "—"} / {v.size || "—"}</span><b>{getVariantScopedStock(v)}</b></div>)}</div></section>
+              </div>
+              <div className="border-t bg-white p-4"><button type="button" onClick={() => { setQuickViewProduct(null); openProductDetail(product); }} className="w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white">Mở chi tiết đầy đủ</button></div>
+            </div>
+          </div>
+        );
+      })() : null}
+
       <Panel className="overflow-hidden">
         {loading ? (
           <div className="p-5">
@@ -5452,13 +5490,17 @@ export default function ProductsPageClient() {
                       product.variants.map((variant) => variant.size),
                     );
                     const stockBySize = new Map<string, number>();
+                    const stockByColor = new Map<string, number>();
                     product.variants.forEach((variant) => {
+                      const stock = getVariantScopedStock(variant);
                       const size = String(variant.size || "").trim();
-                      if (!size) return;
-                      stockBySize.set(
-                        size,
-                        (stockBySize.get(size) || 0) + getVariantScopedStock(variant),
-                      );
+                      const color = String(variant.color || "").trim();
+                      if (size) {
+                        stockBySize.set(size, (stockBySize.get(size) || 0) + stock);
+                      }
+                      if (color) {
+                        stockByColor.set(color, (stockByColor.get(color) || 0) + stock);
+                      }
                     });
 
                     const productForPreview =
@@ -5528,11 +5570,22 @@ export default function ProductsPageClient() {
 
                         <td className="min-w-[120px] border-b border-neutral-100 px-3 py-3">
                           <div className="flex flex-wrap gap-2">
-                            {colorsList.map((color) => (
-                              <Badge key={color} tone="gray">
-                                {color}
-                              </Badge>
-                            ))}
+                            {colorsList.map((color) => {
+                              const qty = stockByColor.get(color) || 0;
+                              return (
+                                <span
+                                  key={color}
+                                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                                    qty > 0
+                                      ? "border-green-200 bg-green-50 text-green-700"
+                                      : "border-amber-200 bg-amber-50 text-amber-700"
+                                  }`}
+                                  title={`Màu ${color}: ${qty} sản phẩm tồn (tất cả size)`}
+                                >
+                                  {color}: <strong>{qty}</strong>
+                                </span>
+                              );
+                            })}
                           </div>
                         </td>
 
@@ -5618,10 +5671,10 @@ export default function ProductsPageClient() {
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
-                              onClick={() => openProductDetail(product)}
+                              onClick={() => setQuickViewProduct(product)}
                               className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800"
                             >
-                              Chi tiết
+                              Xem nhanh
                             </button>
 
                             {canPrintProductLabels ? (

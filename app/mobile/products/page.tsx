@@ -348,105 +348,15 @@ function MobileImagePreviewModal({
 }
 
 
-function MobileProductColorPreview({
-  product,
-  onOpenImage,
-}: {
-  product: MobileProduct;
-  onOpenImage: (product: MobileProduct, startSrc?: string | null, startLabel?: string) => void;
-}) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const [previewProduct, setPreviewProduct] = useState<MobileProduct>(product);
-  const [detailLoaded, setDetailLoaded] = useState(false);
-
-  useEffect(() => {
-    setPreviewProduct(product);
-    setDetailLoaded(false);
-  }, [product]);
-
-  useEffect(() => {
-    const node = hostRef.current;
-    if (!node || detailLoaded) return;
-
-    let cancelled = false;
-    let observer: IntersectionObserver | null = null;
-
-    const loadDetail = async () => {
-      try {
-        const detail = await fetchWithAuth<any>(
-          `/products/${encodeURIComponent(product.id)}`,
-        );
-        if (!cancelled && detail?.id) {
-          // Endpoint chi tiết trả map ảnh màu/variant image đầy đủ hơn endpoint list.
-          // Chỉ hydrate khi card sắp đi vào viewport để tránh gọi detail cho toàn bộ danh sách.
-          setPreviewProduct({ ...product, ...detail } as MobileProduct);
-        }
-      } catch {
-        // Giữ dữ liệu list hiện tại nếu detail lỗi; không ảnh hưởng thao tác danh sách.
-      } finally {
-        if (!cancelled) setDetailLoaded(true);
-      }
-    };
-
-    if (typeof IntersectionObserver === "undefined") {
-      void loadDetail();
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        observer?.disconnect();
-        void loadDetail();
-      },
-      { rootMargin: "320px 0px" },
-    );
-    observer.observe(node);
-
-    return () => {
-      cancelled = true;
-      observer?.disconnect();
-    };
-  }, [detailLoaded, product]);
-
-  const colors = getProductColorRepresentatives(previewProduct);
-
-  return (
-    <div ref={hostRef} className="mt-2 flex items-center gap-1.5 overflow-hidden">
-      {colors.map((color) => (
-        <div
-          key={color.key}
-          title={`${color.label}${color.image ? " · Bấm để xem ảnh" : ""}`}
-          className={`h-8 w-8 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-200 ${color.image ? "cursor-zoom-in" : ""}`}
-          onClick={(event) => {
-            if (!color.image) return;
-            event.preventDefault();
-            event.stopPropagation();
-            onOpenImage(previewProduct, color.image, color.label);
-          }}
-        >
-          {color.image ? (
-            <img
-              src={color.image}
-              alt={color.label}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-[9px] font-black text-neutral-500">
-              {color.label.slice(0, 2).toUpperCase()}
-            </div>
-          )}
-        </div>
-      ))}
-      {colors.length > 0 ? (
-        <span className="ml-1 truncate text-xs text-neutral-500">
-          {colors.length} màu
-        </span>
-      ) : null}
-    </div>
-  );
+function MobileProductColorPreview({ product, onOpenImage }: { product: MobileProduct; onOpenImage: (product: MobileProduct, startSrc?: string | null, startLabel?: string) => void }) {
+  const colors = getProductColorRepresentatives(product);
+  return <div className="mt-2 flex flex-wrap items-center gap-1.5">{colors.map(color => {
+    const qty = (product.variants || []).filter(v => normalizeColorKey(v.color) === color.key).reduce((sum,v)=>sum + Number(v.availableQty || 0),0);
+    return <div key={color.key} className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-1.5 py-1 text-[11px] font-semibold text-neutral-800">
+      {color.image ? <img src={color.image} alt={color.label} className="h-6 w-6 rounded-full object-cover" onClick={(e)=>{e.preventDefault();e.stopPropagation();onOpenImage(product,color.image,color.label);}} /> : null}
+      <span>{color.label}: <b className={qty > 0 ? "text-emerald-700" : "text-amber-700"}>{qty}</b></span>
+    </div>;
+  })}</div>;
 }
 
 export default function MobileProductsPage() {
@@ -458,7 +368,8 @@ export default function MobileProductsPage() {
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
   const [searchText, setSearchText] = useState("");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [quickProduct, setQuickProduct] = useState<MobileProduct | null>(null);
+  const [quickLoading, setQuickLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [imagePreview, setImagePreview] = useState<MobileImagePreviewState | null>(null);
@@ -599,6 +510,17 @@ export default function MobileProductsPage() {
     if (!items.length) return;
     setImagePreview({ title: product.name, items, index: Math.max(0, index) });
   };
+
+  async function openQuickProduct(product: MobileProduct) {
+    setQuickProduct(product);
+    setQuickLoading(true);
+    try {
+      const payload = await fetchWithAuth<any>(`/products/${encodeURIComponent(product.id)}`);
+      const detail = payload?.data?.product || payload?.data || payload?.product || payload;
+      if (detail?.id === product.id) setQuickProduct({ ...product, ...detail, variants: product.variants?.length ? product.variants : (detail.variants || []) });
+    } catch { /* Keep data from product list. */ }
+    finally { setQuickLoading(false); }
+  }
 
   async function loadProducts() {
     try {
@@ -974,7 +896,7 @@ export default function MobileProductsPage() {
         ) : (
           <div className="space-y-3">
             {visibleProducts.map((product) => {
-              const expanded = expandedId === product.id;
+
               return (
                 <div
                   key={product.id}
@@ -1056,40 +978,13 @@ export default function MobileProductsPage() {
 
                   <button
                     type="button"
-                    onClick={() => setExpandedId(expanded ? null : product.id)}
+                    onClick={() => void openQuickProduct(product)}
                     className="mt-3 w-full rounded-2xl border border-neutral-200 py-2 text-sm font-semibold"
                   >
-                    {expanded ? "Thu gọn SKU" : "Xem nhanh SKU"}
+                    Xem nhanh sản phẩm
                   </button>
 
-                  {expanded ? (
-                    <div className="mt-4 space-y-2 border-t border-neutral-100 pt-4">
-                      {(product.variants || []).map((variant) => (
-                        <Link
-                          href={`/mobile/products/${encodeURIComponent(product.id)}`}
-                          key={variant.id}
-                          className="block rounded-2xl bg-neutral-50 p-3 text-sm"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="font-semibold text-neutral-950">
-                                {variant.sku}
-                              </div>
-                              <div className="mt-1 text-neutral-500">
-                                {variant.color || "-"} / {variant.size || "-"}
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-bold text-neutral-950">
-                                {variant.availableQty}
-                              </div>
-                              <div className="text-xs text-neutral-500">còn</div>
-                            </div>
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
-                  ) : null}
+
                 </div>
               );
             })}
@@ -1097,6 +992,16 @@ export default function MobileProductsPage() {
         )}
       </div>
 
+      {quickProduct ? <div className="fixed inset-0 z-[130] flex items-end justify-center bg-black/50" onMouseDown={(event)=>{if(event.target===event.currentTarget)setQuickProduct(null);}}>
+        <div role="dialog" aria-modal="true" aria-label={`Xem nhanh ${quickProduct.name}`} className="flex max-h-[90vh] w-full max-w-md flex-col rounded-t-[2rem] bg-white shadow-2xl">
+          <div className="flex items-center justify-between border-b px-4 py-3"><div className="min-w-0"><div className="text-xs text-neutral-500">XEM NHANH</div><div className="truncate font-bold">{quickProduct.name}</div></div><button type="button" onClick={()=>setQuickProduct(null)} className="rounded-full border px-3 py-2">Đóng ×</button></div>
+          <div className="space-y-4 overflow-y-auto p-4">
+            <div className="flex items-center gap-3">{quickProduct.imageUrl ? <img src={absoluteImageUrl(quickProduct.imageUrl)} alt={quickProduct.name} className="h-20 w-20 rounded-xl object-cover"/> : null}<div><div className="text-xs text-neutral-500">{quickProduct.category || quickProduct.productType || "Sản phẩm"}</div><div className="text-xl font-black">{quickProduct.totalAvailable} tồn</div><div className="text-xs text-neutral-500">{quickLoading ? "Đang cập nhật chi tiết..." : `${quickProduct.variants?.length || 0} SKU`}</div></div></div>
+            <div className="space-y-2">{Array.from(new Set((quickProduct.variants || []).map(v=>normalizeColorKey(v.color) || "KHÁC"))).map(color => {const rows=(quickProduct.variants || []).filter(v=>(normalizeColorKey(v.color) || "KHÁC")===color);const total=rows.reduce((s,v)=>s+Number(v.availableQty || 0),0);return <div key={color} className="rounded-xl border p-3"><div className="flex justify-between font-bold"><span>{color}</span><span className={total>0?"text-emerald-700":"text-amber-700"}>{total}</span></div><div className="mt-2 flex flex-wrap gap-1.5">{rows.map(v=><span key={v.id} className="rounded-full bg-neutral-100 px-2 py-1 text-xs">{v.size || "—"}: {v.availableQty || 0}</span>)}</div></div>;})}</div>
+          </div>
+          <div className="border-t p-4"><Link href={`/mobile/products/${encodeURIComponent(quickProduct.id)}`} className="block rounded-xl bg-neutral-950 py-3 text-center text-sm font-bold text-white">Xem chi tiết và lịch sử kho</Link></div>
+        </div>
+      </div> : null}
       <MobileImagePreviewModal
         preview={imagePreview}
         onClose={() => setImagePreview(null)}

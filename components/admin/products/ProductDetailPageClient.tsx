@@ -1642,13 +1642,21 @@ export default function ProductDetailPageClient({
         });
       });
 
-      const totalQty = nextVariants.reduce((sum: number, variant: any) => {
-        return sum + branches.reduce((branchSum, branch) => branchSum + getAvailableQty(variant.id, branch.id), 0);
-      }, 0);
+      // Tồn của từng size trong màu = tổng tồn của SKU đó qua các chi nhánh.
+      // Dùng cùng nguồn tồn với cột "Tồn chi nhánh", không cộng gộp từ tổng sản phẩm.
+      const variantsWithStock = nextVariants.map((variant: any) => ({
+        variant,
+        qty: branches.reduce(
+          (sum, branch) => sum + getAvailableQty(variant.id, branch.id),
+          0,
+        ),
+      }));
+      const totalQty = variantsWithStock.reduce((sum, item) => sum + item.qty, 0);
 
       return {
         ...group,
         variants: nextVariants,
+        variantsWithStock,
         totalQty,
       };
     });
@@ -2752,14 +2760,14 @@ export default function ProductDetailPageClient({
                       Danh sách variant
                     </h2>
                     <p className="mt-0.5 text-xs text-neutral-500">
-                      SKU, tên phiên bản, màu, size, giá và tồn theo từng chi nhánh.
+                      Tổng tồn từng size theo màu, cùng tồn kho chi tiết của từng chi nhánh.
                     </p>
                   </div>
                   <Badge tone="gray">{variantCount} dòng</Badge>
                 </div>
 
                 <div className="overflow-auto">
-                  <table className="min-w-[1260px] w-full border-collapse text-sm">
+                  <table className="min-w-[1360px] w-full border-collapse text-sm">
                     <thead className="bg-neutral-50 text-left text-[11px] uppercase text-neutral-500">
                       <tr>
                         <th className="border-b px-4 py-3">Nhóm màu</th>
@@ -2767,6 +2775,7 @@ export default function ProductDetailPageClient({
                         <th className="border-b px-4 py-3">Tên phiên bản</th>
                         <th className="border-b px-4 py-3">Màu</th>
                         <th className="border-b px-4 py-3">Size</th>
+                        <th className="border-b px-4 py-3 whitespace-nowrap">Tổng tồn size</th>
                         <th className="border-b px-4 py-3">Giá bán</th>
                         {canViewCost ? (
                           <th className="border-b px-4 py-3">
@@ -2825,12 +2834,19 @@ export default function ProductDetailPageClient({
                                           {groupSize} size · Tổng tồn {group.totalQty}
                                         </p>
                                         <div className="mt-2 flex flex-wrap gap-1.5">
-                                          {group.variants.map((item: any) => (
+                                          {group.variantsWithStock.map(({ variant: item, qty }: any) => (
                                             <span
                                               key={item.id || item.sku || item.size}
-                                              className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-600"
+                                              title={`${group.colorLabel} · Size ${item.size || '—'} · Tổng ${qty} sản phẩm qua các chi nhánh`}
+                                              className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                                                qty <= 0
+                                                  ? "border-red-200 bg-red-50 text-red-700"
+                                                  : qty <= 3
+                                                    ? "border-amber-200 bg-amber-50 text-amber-700"
+                                                    : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                              }`}
                                             >
-                                              {item.size || '—'}
+                                              {item.size || '—'}: {qty}
                                             </span>
                                           ))}
                                         </div>
@@ -2970,6 +2986,25 @@ export default function ProductDetailPageClient({
                                     {variant.size || "—"}
                                   </span>
                                 </div>
+                              </td>
+                              <td className="border-b px-4 py-3">
+                                {(() => {
+                                  const qty = group.variantsWithStock[index]?.qty ?? 0;
+                                  return (
+                                    <span
+                                      className={`inline-flex min-w-12 justify-center rounded-full px-2.5 py-1 text-xs font-bold ${
+                                        qty <= 0
+                                          ? "bg-red-50 text-red-700"
+                                          : qty <= 3
+                                            ? "bg-amber-50 text-amber-700"
+                                            : "bg-emerald-50 text-emerald-700"
+                                      }`}
+                                      title={`Tổng tồn ${group.colorLabel} / ${variant.size || '—'} qua các chi nhánh`}
+                                    >
+                                      {qty}
+                                    </span>
+                                  );
+                                })()}
                               </td>
                               <td className="border-b px-4 py-3">
                                 {currency(Number(variant.price || 0))}

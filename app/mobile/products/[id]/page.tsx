@@ -169,9 +169,9 @@ function colorImage(product: Product, variant: Variant) {
   const key = normalizeColor(variant.color);
   const map = product.colorImages || product.imagesByColor || {};
   return imageUrl(
-    variant.imageUrl ||
-      map[key] ||
+    map[key] ||
       map[String(variant.color || "")] ||
+      variant.imageUrl ||
       product.imageUrl ||
       "",
   );
@@ -721,6 +721,11 @@ export default function MobileProductDetailPage() {
                 </div>
               </div>
             </section>
+
+            <Section title="Tồn kho theo màu" icon={<Boxes className="h-5 w-5" />}>
+              <div className="grid grid-cols-2 gap-2">{colorGroups.map(group => <button type="button" key={group.key} onClick={()=>setSelected(group.rows[0]?.id || group.rows[0]?.sku || "")} className="flex items-center gap-2 rounded-xl border border-neutral-200 p-2 text-left"><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{group.label}</div><div className={`text-lg font-black ${group.totalStock>0?"text-emerald-700":"text-amber-700"}`}>{group.totalStock}</div></div>{group.image ? <img src={group.image} alt={group.label} className="h-10 w-10 rounded-lg object-cover"/> : null}</button>)}</div>
+              <p className="mt-2 text-xs text-neutral-500">Chạm màu để chọn biến thể đầu tiên của màu đó. Xem size và SKU ở mục bên dưới.</p>
+            </Section>
 
             <Section title="Biến thể" icon={<Shirt className="h-5 w-5" />}>
               <div className="-mx-1 flex max-w-full gap-3 overflow-x-auto px-1 pb-2">
