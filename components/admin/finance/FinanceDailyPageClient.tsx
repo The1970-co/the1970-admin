@@ -2491,7 +2491,7 @@ export default function FinanceDailyPageClient() {
             />
           </Field>
 
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
             <button
               type="button"
               onClick={() => {
@@ -2501,6 +2501,13 @@ export default function FinanceDailyPageClient() {
               className="h-11 rounded-xl bg-black px-5 text-sm font-semibold text-white"
             >
               {loading ? "Đang lọc..." : "Lọc"}
+            </button>
+            <button
+              type="button"
+              onClick={openExport}
+              className="h-11 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-neutral-900 hover:bg-neutral-50"
+            >
+              Xuất Excel
             </button>
           </div>
         </div>
@@ -3462,7 +3469,7 @@ export default function FinanceDailyPageClient() {
                 Gồm POS hoàn thành, phiếu thu/chi, chuyển khoản/cọc đã ghi nhận.
               </p>
             </div>
-            <div className="flex items-center gap-3"><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">{rows.length} dòng</span><button type="button" onClick={openExport} className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-semibold text-white">Xuất Excel</button></div>
+            <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">{rows.length} dòng</span>
           </div>
         </div>
 
