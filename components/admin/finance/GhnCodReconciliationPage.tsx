@@ -1322,7 +1322,7 @@ export default function GhnCodReconciliationPage() {
                 Đối soát nhanh bằng mã đơn
               </h3>
               <p className="mt-1 text-sm text-neutral-500">
-                Dán 1 hoặc nhiều mã đơn nội bộ / mã vận đơn GHN. Có thể xuống
+                Dán 1 hoặc nhiều mã đơn nội bộ / mã vận đơn HVC (GHN, SPX, AhaMove, Viettel Post...). Có thể xuống
                 dòng, cách nhau bằng dấu phẩy, dấu cách hoặc paste nguyên đoạn
                 từ Excel. Đối soát thực tế: mỗi dòng gồm mã vận đơn, COD GHN,
                 phí GHN (ngăn cách bằng Tab hoặc dấu |).
@@ -1567,7 +1567,7 @@ export default function GhnCodReconciliationPage() {
                 <th className="px-4 py-3">STT</th>
                 <th className="px-4 py-3">Đơn nội bộ</th>
                 <th className="px-4 py-3">Mã đơn KH trong file</th>
-                <th className="px-4 py-3">Mã đơn GHN</th>
+                <th className="px-4 py-3">Mã đơn HVC</th>
                 <th className="px-4 py-3">Cửa hàng</th>
                 <th className="px-4 py-3">Trạng thái giao hàng</th>
                 <th className="px-4 py-3 text-right">COD hệ thống</th>
