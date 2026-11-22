@@ -96,6 +96,47 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
   const [editingCodRowId, setEditingCodRowId] = useState<string | null>(null);
   const [codDraft, setCodDraft] = useState("");
   const [savingCodRowId, setSavingCodRowId] = useState<string | null>(null);
+  const [confirmingBatch, setConfirmingBatch] = useState(false);
+
+  async function confirmReconciliation() {
+    if (!batchId || !data?.rows?.length || confirmingBatch) return;
+    const eligible = data.rows.filter((row) => !isConfirmedRow(row) && !isPaidRow(row));
+    const unresolved = eligible.filter((row) => {
+      const issues = normalizeIssues(row.issues);
+      return issues.includes("MISSING_PARTNER_COD") || issues.includes("NOT_FOUND_INTERNAL_ORDER");
+    });
+    if (!eligible.length) {
+      setMessage("Tất cả dòng trong phiên đã được xác nhận hoặc thanh toán.");
+      return;
+    }
+    if (unresolved.length) {
+      setMessage(`Còn ${unresolved.length} dòng chưa có COD HVC hoặc chưa tìm thấy đơn nội bộ. Cần xử lý trước khi xác nhận.`);
+      return;
+    }
+    // API hiện tại còn tạo payment COD cho đơn khi xác nhận, vì vậy phải thông báo rõ.
+    const accepted = window.confirm(
+      `Xác nhận đối soát ${eligible.length} đơn?\n\nLƯU Ý: Backend hiện tại đồng thời ghi nhận thanh toán COD vào đơn gốc khi xác nhận đối soát. Chỉ tiếp tục nếu số tiền đối tác đã được kiểm chứng và thực sự được thanh toán.\n\nBạn có chắc muốn thực hiện?`,
+    );
+    if (!accepted) return;
+    setConfirmingBatch(true);
+    setMessage("");
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const res = await fetch(`${API_BASE}/finance/ghn-cod-reconciliation/${encodeURIComponent(batchId)}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ rowIds: eligible.map((row) => row.id) }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(Array.isArray(json?.message) ? json.message.join(", ") : json?.message || "Xác nhận đối soát thất bại.");
+      await loadDetail();
+      setMessage(`Đã xác nhận ${Number(json?.affectedRows ?? eligible.length)} dòng đối soát. Kiểm tra trạng thái thanh toán trên đơn gốc.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Không xác nhận được phiên đối soát.");
+    } finally {
+      setConfirmingBatch(false);
+    }
+  }
 
   async function savePartnerCod(row: HistoryRow) {
     const normalized = codDraft.trim().replace(/[.\s]/g, "");
@@ -268,6 +309,14 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void confirmReconciliation()}
+            disabled={loading || confirmingBatch || !rows.some((row) => !isConfirmedRow(row) && !isPaidRow(row))}
+            className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {confirmingBatch ? "Đang xác nhận..." : "Xác nhận đối soát"}
+          </button>
           <Link
             href="/finance/ghn-reconciliation"
             className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
