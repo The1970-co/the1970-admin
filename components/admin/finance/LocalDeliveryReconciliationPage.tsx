@@ -319,6 +319,60 @@ export default function LocalDeliveryReconciliationPage() {
   >([{ paymentSourceId: "", amount: "" }]);
   const [shippingFeePayer, setShippingFeePayer] = useState<ShippingFeePayer>("SHOP");
   const [shippingFeeAmount, setShippingFeeAmount] = useState("");
+  const [voucherPage, setVoucherPage] = useState(1);
+  const [voucherPageSize, setVoucherPageSize] = useState(50);
+  const [voucherQuery, setVoucherQuery] = useState("");
+  const [voucherList, setVoucherList] = useState<any>({ items: [], total: 0, totalPages: 1 });
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const [voucherDetail, setVoucherDetail] = useState<any>(null);
+  const [voucherDetailLoading, setVoucherDetailLoading] = useState(false);
+  const [quickOrder, setQuickOrder] = useState<any>(null);
+  const [quickOrderLoading, setQuickOrderLoading] = useState(false);
+
+  const loadVoucherList = async () => {
+    if (!canViewLocalDelivery) return;
+    setVoucherLoading(true);
+    try {
+      const qp = new URLSearchParams({
+        page: String(voucherPage), pageSize: String(voucherPageSize), q: voucherQuery,
+        branchId: !isGlobalFinanceUser && currentBranchId ? currentBranchId : branchId,
+      });
+      const res = await apiJson<any>(`/finance/local-delivery-reconciliation/reconciliations/list?${qp}`);
+      setVoucherList(res);
+    } catch (e) {
+      console.error("Không tải được danh sách phiếu đối soát", e);
+    } finally { setVoucherLoading(false); }
+  };
+
+  const openVoucher = async (id: string) => {
+    setVoucherDetail({ id });
+    setVoucherDetailLoading(true);
+    try {
+      const res = await apiJson<any>(`/finance/local-delivery-reconciliation/reconciliations/${encodeURIComponent(id)}/detail`);
+      setVoucherDetail(res);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Không tải được phiếu đối soát.");
+      setVoucherDetail(null);
+    } finally { setVoucherDetailLoading(false); }
+  };
+
+  const openQuickRow = async (row: any) => {
+    if (row.reconciliationId) {
+      await openVoucher(String(row.reconciliationId));
+      return;
+    }
+    setQuickOrder({ ...row, payments: row.paymentSourcesBreakdown || [] });
+    setQuickOrderLoading(true);
+    try {
+      const detail = await apiJson<any>(`/orders/${encodeURIComponent(row.orderId)}`);
+      setQuickOrder({ ...row, ...detail, payments: Array.isArray(detail?.payments) ? detail.payments : (row.paymentSourcesBreakdown || []) });
+    } catch (err) {
+      // Giữ dữ liệu hàng có sẵn; không làm mất popup nếu endpoint chi tiết lỗi.
+      console.error("Không tải được chi tiết đơn", err);
+    } finally {
+      setQuickOrderLoading(false);
+    }
+  };
 
   const applyQuickRange = (range: QuickRange) => {
     setQuickRange(range);
@@ -388,6 +442,7 @@ export default function LocalDeliveryReconciliationPage() {
         `/finance/local-delivery-reconciliation?${params.toString()}`,
       );
       setData(result);
+      void loadVoucherList();
       setSelectedIds([]);
       setDeletedIds([]);
       setBulkMessage("");
@@ -465,6 +520,10 @@ export default function LocalDeliveryReconciliationPage() {
     currentBranchId,
     isGlobalFinanceUser,
   ]);
+
+  useEffect(() => {
+    void loadVoucherList();
+  }, [voucherPage, voucherPageSize, voucherQuery, branchId, canViewLocalDelivery, currentBranchId, isGlobalFinanceUser]);
 
   const rawRows = Array.isArray(data?.rows) ? data.rows : [];
   const visibleRows = rawRows.filter(
@@ -1092,6 +1151,7 @@ export default function LocalDeliveryReconciliationPage() {
                 <th className="px-4 py-3 font-medium">Đối soát</th>
                 <th className="px-4 py-3 text-right font-medium">COD</th>
                 <th className="px-4 py-3 text-right font-medium">Phí ship</th>
+                <th className="px-4 py-3 font-medium">Nguồn tiền / phân bổ</th>
                 <th className="px-4 py-3 text-right font-medium">Đã thu</th>
                 <th className="px-4 py-3 text-right font-medium">Còn thu</th>
                 <th className="px-4 py-3 font-medium">Địa chỉ / ghi chú</th>
@@ -1165,16 +1225,16 @@ export default function LocalDeliveryReconciliationPage() {
                     <td className="px-4 py-3">
                       {row.reconciliationId ? (
                         <div>
-                          <div className="font-semibold text-neutral-900">{row.reconciliationCode}</div>
+                          <button type="button" onClick={() => void openVoucher(row.reconciliationId)} className="font-semibold text-blue-700 hover:underline">{row.reconciliationCode}</button>
                           <span className={`mt-1 inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${reconciliationStatusClass(row.reconciliationStatus)}`}>
                             {row.reconciliationStatusLabel}
                           </span>
                           <div className="mt-1 text-xs text-neutral-500">
-                            Tạo: {formatDateTime(row.reconciliationCreatedAt)}
+                            Ngày tạo phiếu: {formatDateTime(row.reconciliationCreatedAt)}
                           </div>
                           {row.reconciliationConfirmedAt ? (
                             <div className="text-xs text-neutral-500">
-                              Xác nhận: {formatDateTime(row.reconciliationConfirmedAt)}
+                              Ngày đối soát: {formatDateTime(row.reconciliationConfirmedAt)}
                             </div>
                           ) : null}
                           {row.reconciliationPaidAt ? (
@@ -1191,6 +1251,19 @@ export default function LocalDeliveryReconciliationPage() {
                     </td>
                     <td className="px-4 py-3 text-right font-semibold">{currency(row.codAmount)}</td>
                     <td className="px-4 py-3 text-right">{currency(row.shippingFee)}</td>
+                    <td className="px-4 py-3 text-xs">
+                      {(row.paymentSourcesBreakdown || []).length
+                        ? row.paymentSourcesBreakdown.map((p: any) => (
+                          <div key={p.id} className="mb-1 text-neutral-800">{p.name}: <b>{currency(p.amount)}</b></div>
+                        ))
+                        : (row.reconciliationPaymentRows?.payments || []).length
+                          ? row.reconciliationPaymentRows.payments.map((p: any, i: number) => (
+                              <div key={`${p.paymentSourceId || "source"}-${i}`} className="mb-1 text-neutral-800">
+                                {p.paymentSourceName || "Nguồn tiền đối soát"}: <b>{currency(p.amount)}</b>
+                              </div>
+                            ))
+                          : <span className="text-amber-700">Chưa có dữ liệu nguồn tiền trên dòng thanh toán</span>}
+                    </td>
                     <td className="px-4 py-3 text-right">{currency(row.paidAmount)}</td>
                     <td className="px-4 py-3 text-right font-semibold">{currency(row.needCollectAmount)}</td>
                     <td className="max-w-[280px] px-4 py-3 text-neutral-600">
@@ -1200,6 +1273,13 @@ export default function LocalDeliveryReconciliationPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void openQuickRow(row)}
+                          className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
+                        >
+                          Xem nhanh
+                        </button>
                         <button
                           disabled={Boolean(row.reconciliationId)}
                           onClick={() => createReconciliation([row])}
@@ -1401,6 +1481,133 @@ export default function LocalDeliveryReconciliationPage() {
           </div>
         ) : null}
       </section>
+
+      <section className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Danh sách phiếu đối soát đã tạo</h2>
+            <p className="mt-1 text-sm text-neutral-500">{voucherList.total || 0} phiếu · Bấm mã phiếu để xem nhanh chi tiết</p>
+          </div>
+          <div className="flex gap-2">
+            <input className="h-10 rounded-xl border border-neutral-200 px-3 text-sm" placeholder="Mã phiếu / mã đơn / vận đơn" value={voucherQuery} onChange={e => {setVoucherQuery(e.target.value);setVoucherPage(1);}} />
+            <select className="h-10 rounded-xl border border-neutral-200 px-3 text-sm" value={voucherPageSize} onChange={e => {setVoucherPageSize(Number(e.target.value));setVoucherPage(1);}}>
+              <option value={50}>50 phiếu/trang</option>
+              <option value={100}>100 phiếu/trang</option>
+            </select>
+            <button onClick={() => void loadVoucherList()} className="rounded-xl border px-3 text-sm">Làm mới</button>
+          </div>
+        </div>
+        <div className="mt-4 overflow-x-auto rounded-2xl border border-neutral-200">
+          <table className="min-w-[1100px] w-full text-left text-sm">
+            <thead className="bg-neutral-50 text-neutral-600"><tr>
+              <th className="p-3">Mã phiếu</th><th className="p-3">Đơn hàng / vận đơn</th><th className="p-3">HVC</th><th className="p-3">Ngày tạo phiếu</th><th className="p-3">Ngày đối soát</th><th className="p-3">Ngày thanh toán</th><th className="p-3">Trạng thái</th><th className="p-3 text-right">COD / đã thu</th><th className="p-3 text-right">Chi tiết</th>
+            </tr></thead>
+            <tbody>
+              {(voucherList.items || []).map((v: any) => (
+                <tr key={v.id} className="border-t">
+                  <td className="p-3"><button className="font-semibold text-blue-700 hover:underline" onClick={() => void openVoucher(v.id)}>{v.code || v.id}</button></td>
+                  <td className="p-3">{v.orderCode || "—"}<div className="text-xs text-neutral-500">{v.trackingCode || "—"}</div></td>
+                  <td className="p-3">{v.carrier || "—"}</td>
+                  <td className="p-3">{formatDateTime(v.createdAt)}</td>
+                  <td className="p-3">{formatDateTime(v.confirmedAt)}</td>
+                  <td className="p-3">{formatDateTime(v.paidAt)}</td>
+                  <td className="p-3">{v.status || "—"}</td>
+                  <td className="p-3 text-right">{currency(v.codAmount)}<div className="text-xs text-emerald-700">Đã thu {currency(v.paidAmount)}</div></td>
+                  <td className="p-3 text-right"><button onClick={() => void openVoucher(v.id)} className="rounded-lg border px-3 py-1.5 hover:bg-neutral-50">Xem nhanh</button></td>
+                </tr>
+              ))}
+              {!voucherLoading && !(voucherList.items || []).length ? <tr><td colSpan={9} className="p-8 text-center text-neutral-400">Chưa có phiếu</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-4 flex items-center justify-end gap-3 text-sm">
+          <span>Trang {voucherList.page || voucherPage}/{voucherList.totalPages || 1}</span>
+          <button className="rounded-lg border px-3 py-2 disabled:opacity-40" disabled={voucherLoading || voucherPage <= 1} onClick={() => setVoucherPage(p => p - 1)}>Trang trước</button>
+          <button className="rounded-lg border px-3 py-2 disabled:opacity-40" disabled={voucherLoading || voucherPage >= (voucherList.totalPages || 1)} onClick={() => setVoucherPage(p => p + 1)}>Trang sau</button>
+        </div>
+      </section>
+
+      {quickOrder ? (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4" onMouseDown={e => { if (e.target === e.currentTarget) setQuickOrder(null); }}>
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div><h2 className="text-xl font-bold">Xem nhanh đơn {quickOrder.orderCode || ""}</h2>
+                <p className="mt-1 text-sm text-neutral-500">{quickOrder.carrierName || quickOrder.carrier || "HVC"} · {quickOrder.trackingCode || quickOrder.shipment?.trackingCode || "—"}</p></div>
+              <button type="button" onClick={() => setQuickOrder(null)} className="rounded-xl border px-3 py-2 text-sm">Đóng ✕</button>
+            </div>
+            {quickOrderLoading ? <p className="mt-3 text-sm text-neutral-500">Đang tải chi tiết đơn...</p> : null}
+            <div className="mt-5 grid gap-3 rounded-xl bg-neutral-50 p-4 text-sm sm:grid-cols-2">
+              <div>Khách hàng: <b>{quickOrder.customerName || "—"}</b></div>
+              <div>SĐT: <b>{quickOrder.customerPhone || "—"}</b></div>
+              <div>Ngày tạo đơn: <b>{formatDateTime(quickOrder.orderCreatedAt || quickOrder.createdAt)}</b></div>
+              <div>Trạng thái thanh toán: <b>{paymentStatusLabel(quickOrder.paymentStatus || "")}</b></div>
+              <div>COD: <b>{currency(quickOrder.codAmount ?? quickOrder.shipment?.codAmount ?? 0)}</b></div>
+              <div>Phí ship: <b>{currency(quickOrder.shippingFee ?? quickOrder.shipment?.shippingFee ?? 0)}</b></div>
+              <div>Phiếu đối soát: <b>Chưa tạo</b></div>
+            </div>
+            <h3 className="mt-5 font-semibold">Chi tiết nguồn tiền đơn gốc</h3>
+            <div className="mt-2 rounded-xl border text-sm">
+              {(quickOrder.payments || []).filter((p: any) => ["PAID", "PARTIAL"].includes(String(p.status || "PAID"))).map((p: any, i: number) => (
+                <div key={p.id || i} className="flex justify-between gap-3 border-b p-3 last:border-0">
+                  <span>{p.paymentSource?.name || p.name || p.method || "Chưa xác định nguồn"}</span><b>{currency(p.amount)}</b>
+                </div>
+              ))}
+              {!(quickOrder.payments || []).length ? <div className="p-3 text-neutral-500">Chưa có dòng thanh toán liên kết đơn</div> : null}
+            </div>
+            <button type="button" onClick={() => openOrder(quickOrder)} className="mt-4 rounded-xl bg-black px-4 py-2 text-sm text-white">Mở đơn gốc</button>
+          </div>
+        </div>
+      ) : null}
+
+      {voucherDetail ? (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4" onMouseDown={(e) => {if (e.target === e.currentTarget) setVoucherDetail(null);}}>
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div><h2 className="text-xl font-bold">Phiếu đối soát {voucherDetail.code || ""}</h2><p className="text-sm text-neutral-500">{voucherDetail.carrier || "Hãng vận chuyển"} · {voucherDetail.status || ""}</p></div>
+              <button onClick={() => setVoucherDetail(null)} className="rounded-lg border px-3 py-1.5">Đóng ✕</button>
+            </div>
+            {voucherDetailLoading ? <p className="py-8 text-center">Đang tải phiếu...</p> : (
+              <>
+                <div className="mt-5 grid gap-3 rounded-2xl bg-neutral-50 p-4 text-sm sm:grid-cols-2">
+                  <div>Mã đơn: <b>{voucherDetail.orderCode || "—"}</b></div>
+                  <div>Mã vận đơn: <b>{voucherDetail.trackingCode || "—"}</b></div>
+                  <div>Khách hàng: <b>{voucherDetail.customerName || "—"}</b></div>
+                  <div>Người tạo phiếu: <b>{voucherDetail.createdByName || "Chưa ghi nhận"}</b></div>
+                  <div>Người đối soát/xác nhận: <b>{voucherDetail.confirmedByName || (voucherDetail.confirmedAt ? "Không có tên trong dữ liệu cũ" : "Chưa xác nhận")}</b></div>
+                  <div>Ngày tạo phiếu: <b>{formatDateTime(voucherDetail.createdAt)}</b></div>
+                  <div>Ngày đối soát: <b>{formatDateTime(voucherDetail.confirmedAt)}</b></div>
+                  <div>Ngày thanh toán: <b>{formatDateTime(voucherDetail.paidAt)}</b></div>
+                  <div>Người thanh toán: <b>{voucherDetail.paidByName || "—"}</b></div>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center text-sm">
+                  <div className="rounded-xl border p-3">COD hệ thống<div className="font-bold">{currency(voucherDetail.codAmount)}</div></div>
+                  <div className="rounded-xl border p-3">Đã thanh toán<div className="font-bold text-emerald-700">{currency(voucherDetail.paidAmount)}</div></div>
+                  <div className="rounded-xl border p-3">Phí ship<div className="font-bold">{currency(voucherDetail.shippingFee)}</div></div>
+                </div>
+                <h3 className="mt-5 font-semibold">Phân bổ nguồn tiền trên phiếu đối soát</h3>
+                <div className="mt-2 overflow-hidden rounded-xl border text-sm">
+                  {(voucherDetail.paymentRows?.payments || []).map((p: any, i: number) => (
+                    <div key={`${p.paymentSourceId || i}`} className="flex justify-between border-b p-3 last:border-0">
+                      <span>{p.paymentSourceName || "Nguồn tiền"}</span><b>{currency(p.amount)}</b>
+                    </div>
+                  ))}
+                  {!voucherDetail.paymentRows?.payments?.length ? <div className="p-3 text-neutral-500">Chưa phân bổ nguồn tiền trên phiếu</div> : null}
+                  {voucherDetail.paymentRows?.shippingFeeSettlement?.payer === "SHOP" ? (
+                    <div className="flex justify-between bg-neutral-50 p-3"><span>Chi phí ship · {voucherDetail.paymentRows.shippingFeeSettlement.paymentSourceName || "Nguồn chưa rõ"}</span><b>{currency(voucherDetail.paymentRows.shippingFeeSettlement.amount)}</b></div>
+                  ) : null}
+                </div>
+                <h3 className="mt-5 font-semibold">Nguồn tiền đã ghi trên đơn gốc</h3>
+                <div className="mt-2 overflow-hidden rounded-xl border text-sm">
+                  {(voucherDetail.orderPayments || []).map((p: any) => <div key={p.id} className="flex justify-between gap-3 border-b p-3 last:border-0"><span>{p.name}<span className="ml-2 text-xs text-neutral-500">{formatDateTime(p.paidAt)}</span></span><b>{currency(p.amount)}</b></div>)}
+                  {!(voucherDetail.orderPayments || []).length ? <p className="p-3 text-neutral-500">Chưa có dòng thanh toán liên kết đơn gốc</p> : null}
+                </div>
+                <div className="mt-4 rounded-xl bg-neutral-50 p-3 text-sm">Ghi chú: {voucherDetail.note || "—"}</div>
+                {voucherDetail.orderId ? <button className="mt-4 rounded-xl bg-black px-4 py-2 text-sm text-white" onClick={() => openOrder({orderId:voucherDetail.orderId,orderCode:voucherDetail.orderCode})}>Mở đơn gốc</button> : null}
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

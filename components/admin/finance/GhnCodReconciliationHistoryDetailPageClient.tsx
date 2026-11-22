@@ -12,7 +12,7 @@ const ISSUE_LABELS: Record<string, string> = {
   MATCHED_BY_PARTIAL_DELIVERY: "Khớp qua giao 1 phần",
   PARTIAL_RETURN_NOT_RECEIVED: "Chưa nhập kho hoàn",
   COD_MISMATCH: "Lệch COD",
-  MISSING_PARTNER_COD: "Chưa nhập COD GHN",
+  MISSING_PARTNER_COD: "Chưa nhập COD đối tác HVC",
   FEE_MISMATCH: "Lệch phí",
 };
 
@@ -348,7 +348,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
                 <th className="px-4 py-3">Mã GHN</th>
                 <th className="px-4 py-3">Trạng thái GHN</th>
                 <th className="px-4 py-3 text-right">COD hệ thống</th>
-                <th className="px-4 py-3 text-right">COD đối tác GHN</th>
+                <th className="px-4 py-3 text-right">COD đối tác HVC</th>
                 <th className="px-4 py-3 text-right">Tiền lệch</th>
                 <th className="px-4 py-3 text-right">Phí</th>
                 <th className="px-4 py-3 text-right">Thực nhận</th>

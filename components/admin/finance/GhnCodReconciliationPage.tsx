@@ -12,7 +12,7 @@ const ISSUE_LABELS: Record<string, string> = {
   MATCHED_BY_PARTIAL_DELIVERY: "Khớp qua phiếu giao 1 phần",
   PARTIAL_RETURN_NOT_RECEIVED: "Chưa nhập kho hàng hoàn",
   COD_MISMATCH: "Lệch COD",
-  MISSING_PARTNER_COD: "Chưa nhập COD GHN",
+  MISSING_PARTNER_COD: "Chưa nhập COD đối tác HVC",
   FEE_MISMATCH: "Lệch phí",
 };
 
@@ -42,6 +42,7 @@ type Row = {
   storeName?: string;
   recipientName?: string;
   ghnStatus?: string;
+  reconciliationStatus?: string | null;
   codAmount: number;
   serviceFee: number;
   totalReconcileAmount: number;
@@ -213,6 +214,9 @@ export default function GhnCodReconciliationPage() {
   const [excelPreviewError, setExcelPreviewError] = useState("");
   const [uploadStatusFilter, setUploadStatusFilter] = useState(DELIVERED_ONLY);
   const [result, setResult] = useState<Result | null>(null);
+  const [editingCodRow, setEditingCodRow] = useState<string | null>(null);
+  const [editingCodValue, setEditingCodValue] = useState("");
+  const [savingCodRow, setSavingCodRow] = useState(false);
   const [filter, setFilter] = useState("ALL");
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [deletedRowIds, setDeletedRowIds] = useState<string[]>([]);
@@ -757,6 +761,43 @@ export default function GhnCodReconciliationPage() {
         await runBatchAction(actionToRun, {}, false);
       },
     });
+  }
+
+  async function savePartnerCod(row: Row) {
+    const rowId = row.reconciliationRowId;
+    if (!rowId) return;
+    const value = editingCodValue.trim().replace(/[.,\s]/g, "");
+    if (!/^\d+$/.test(value)) { alert("Nhập COD đối tác HVC hợp lệ, có thể nhập 0."); return; }
+    setSavingCodRow(true);
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_BASE}/finance/ghn-cod-reconciliation/rows/${encodeURIComponent(rowId)}/partner-cod`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ codAmount: Number(value) }),
+      });
+      const updated = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(updated.message || "Không lưu được COD đối tác.");
+      setResult((prev) => prev ? ({ ...prev,
+        rows: prev.rows.map((item) => item.reconciliationRowId === rowId ? {
+          ...item, codAmount: updated.codAmount, totalReconcileAmount: updated.totalReconcileAmount,
+          reconciliationStatus: updated.reconciliationStatus, issueTypes: updated.issueTypes,
+        } : item),
+        batch: { ...prev.batch,
+          matchedRows: prev.rows.filter((item) => {
+            const status = item.reconciliationRowId === rowId ? updated.reconciliationStatus : item.reconciliationStatus;
+            return status === "MATCHED" || status === "MATCHED_BY_PARTIAL_DELIVERY";
+          }).length,
+          mismatchRows: prev.rows.filter((item) => {
+            const status = item.reconciliationRowId === rowId ? updated.reconciliationStatus : item.reconciliationStatus;
+            return status !== "MATCHED" && status !== "MATCHED_BY_PARTIAL_DELIVERY";
+          }).length,
+        },
+      }) : prev);
+      setEditingCodRow(null);
+      setBatchActionMessage("Đã lưu COD đối tác HVC và tính lại chênh lệch.");
+    } catch (err) { alert(err instanceof Error ? err.message : "Không lưu được COD."); }
+    finally { setSavingCodRow(false); }
   }
 
   async function runBatchAction(
@@ -1530,7 +1571,7 @@ export default function GhnCodReconciliationPage() {
                 <th className="px-4 py-3">Cửa hàng</th>
                 <th className="px-4 py-3">Trạng thái giao hàng</th>
                 <th className="px-4 py-3 text-right">COD hệ thống</th>
-                <th className="px-4 py-3 text-right">COD đối tác GHN</th>
+                <th className="px-4 py-3 text-right">COD đối tác HVC</th>
                 <th className="px-4 py-3 text-right">Tiền lệch</th>
                 <th className="px-4 py-3 text-right">Phí GHN</th>
                 <th className="px-4 py-3 text-right">Tổng đối soát</th>
@@ -1589,7 +1630,28 @@ export default function GhnCodReconciliationPage() {
                       </td>
 
                       <td className="px-4 py-3 text-right">{row.systemCodAmount == null ? "—" : money(row.systemCodAmount)}</td>
-                      <td className="px-4 py-3 text-right">{getBusinessIssues(row).includes("MISSING_PARTNER_COD") ? "Chưa nhập" : money(row.codAmount)}</td>
+                      <td className="px-4 py-3 text-right">
+                        {editingCodRow === rowKey ? (
+                          <div className="flex min-w-[210px] items-center justify-end gap-1">
+                            <input autoFocus type="text" inputMode="numeric" value={editingCodValue}
+                              onChange={(e) => setEditingCodValue(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") void savePartnerCod(row); if (e.key === "Escape") setEditingCodRow(null); }}
+                              className="w-28 rounded-lg border border-neutral-300 px-2 py-1 text-right" />
+                            <button type="button" disabled={savingCodRow} onClick={() => void savePartnerCod(row)} className="rounded bg-emerald-600 px-2 py-1 text-white disabled:opacity-50">Lưu</button>
+                            <button type="button" onClick={() => setEditingCodRow(null)} className="rounded border px-2 py-1">Hủy</button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-2">
+                            <span>{getBusinessIssues(row).includes("MISSING_PARTNER_COD") ? "Chưa nhập" : money(row.codAmount)}</span>
+                            {!isRowConfirmed(row) && !isRowPaid(row) && row.reconciliationRowId ? (
+                              <button type="button" title="Sửa COD đối tác HVC" onClick={() => {
+                                setEditingCodRow(rowKey);
+                                setEditingCodValue(getBusinessIssues(row).includes("MISSING_PARTNER_COD") ? "" : String(row.codAmount));
+                              }} className="rounded border border-neutral-200 px-2 py-1 text-xs hover:bg-neutral-100">Sửa</button>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
                       <td className={`px-4 py-3 text-right font-semibold ${row.systemCodAmount != null && !getBusinessIssues(row).includes("MISSING_PARTNER_COD") && Number(row.codAmount) !== Number(row.systemCodAmount) ? "text-rose-600" : "text-neutral-700"}`}>
                         {row.systemCodAmount == null || getBusinessIssues(row).includes("MISSING_PARTNER_COD") ? "—" : money(Number(row.codAmount) - Number(row.systemCodAmount))}
                       </td>
@@ -2062,7 +2124,7 @@ function filterLabel(filter: string) {
     MATCHED: "Khớp",
     NOT_FOUND_INTERNAL_ORDER: "Không tìm thấy đơn",
     COD_MISMATCH: "Lệch COD",
-  MISSING_PARTNER_COD: "Chưa nhập COD GHN",
+  MISSING_PARTNER_COD: "Chưa nhập COD đối tác HVC",
     FEE_MISMATCH: "Lệch phí",
     PARTIAL_RETURN: "Giao 1 phần",
     PARTIAL_RETURN_NOT_RECEIVED: "Chưa nhập kho hoàn",

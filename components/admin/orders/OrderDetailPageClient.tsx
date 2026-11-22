@@ -167,6 +167,12 @@ type OrderDetail = {
   payments?: PaymentItem[];
   settlementPreview?: SettlementPreview | null;
   exchangeContext?: ExchangeContext | null;
+  localReconciliationHistory?: Array<{
+    code?: string; status?: string; createdAt?: string | null;
+    confirmedAt?: string | null; paidAt?: string | null; paidAmount?: number;
+    payments?: Array<{ paymentSourceId?: string; paymentSourceName?: string; amount?: number }>;
+    shippingFeeSettlement?: { payer?: string; amount?: number; paymentSourceName?: string } | null;
+  }>;
 };
 
 type ShipmentEditDraft = {
@@ -4789,6 +4795,28 @@ export default function OrderDetailPageClient({
                     </p>
                   )}
                 </div>
+                {viewOrder.localReconciliationHistory?.length ? (
+                  <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50/60 p-3">
+                    <p className="mb-2 text-[12px] font-bold text-neutral-900">Lịch sử nguồn tiền đối soát nội thành</p>
+                    {viewOrder.localReconciliationHistory.map((rec, idx) => (
+                      <div key={`${rec.code || idx}`} className="mb-3 last:mb-0">
+                        <div className="mb-1 text-[11px] text-neutral-600">
+                          <b>{rec.code || "Phiếu đối soát"}</b> · {rec.status} · Tạo {formatDateTime(rec.createdAt)} · Đối soát {formatDateTime(rec.confirmedAt)}
+                        </div>
+                        {(rec.payments || []).map((pay, i) => (
+                          <div key={`${pay.paymentSourceId || i}`} className="flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-[12px]">
+                            <span>{pay.paymentSourceName || "Nguồn tiền đối soát"}</span><b>{currency(Number(pay.amount || 0))}</b>
+                          </div>
+                        ))}
+                        {!rec.payments?.length ? <div className="text-[11px] text-neutral-500">Phiếu chưa có phân bổ nguồn tiền.</div> : null}
+                        {rec.shippingFeeSettlement?.payer === "SHOP" ? (
+                          <div className="mt-1 text-[11px] text-neutral-500">Phí ship · {rec.shippingFeeSettlement.paymentSourceName || "Nguồn chưa rõ"}: {currency(Number(rec.shippingFeeSettlement.amount || 0))}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                    <p className="mt-1 text-[10px] text-neutral-500">Lịch sử đối soát để tra cứu, không cộng trùng vào tổng thanh toán của đơn.</p>
+                  </div>
+                ) : null}
               </div>
             </Panel>
 
