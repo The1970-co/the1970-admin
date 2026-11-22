@@ -43,8 +43,13 @@ type ReturnRow = {
   extraChargeAmount?: number;
   refundPaymentSourceId?: string | null;
   extraChargePaymentSourceId?: string | null;
+  refundPaymentSourceName?: string | null;
+  extraChargePaymentSourceName?: string | null;
+  originalPaymentSources?: Array<{ sourceName: string; amount: number }>;
+  returnPaymentSources?: Array<{ direction: string; sourceName: string; amount: number }>;
   note?: string | null;
   createdAt?: string | null;
+  items?: Array<{ id?: string; itemType?: string | null; sku?: string | null; productName?: string | null; qty?: number | null; color?: string | null; size?: string | null; lineTotal?: number | null; unitPrice?: number | null; refundPrice?: number | null }>;
 };
 
 type ReturnDetail = ReturnRow & {
@@ -66,6 +71,7 @@ type ReturnDetail = ReturnRow & {
       sourceName?: string | null;
       method?: string | null;
       amount?: number;
+      status?: string | null;
     }>;
   } | null;
   items?: Array<{
@@ -143,6 +149,7 @@ function ReturnsPageClient() {
   const [selectedReturnId, setSelectedReturnId] = useState("");
   const [detail, setDetail] = useState<ReturnDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [quickViewOpen, setQuickViewOpen] = useState(false);
 
   const [error, setError] = useState("");
 
@@ -202,13 +209,22 @@ function ReturnsPageClient() {
   };
 
   const openDetail = async (id: string) => {
+    setQuickViewOpen(true);
+    setDetail(null);
     try {
       setSelectedReturnId(id);
       setDetailLoading(true);
       setError("");
 
       const json = await apiGet(`/returns/${encodeURIComponent(id)}`);
-      setDetail(json?.data || json);
+      const data = json?.data || json;
+      const matchingListRow = returnRows.find((row) => row.id === id);
+      setDetail({ ...data, ...(matchingListRow ? {
+        originalPaymentSources: matchingListRow.originalPaymentSources,
+        returnPaymentSources: matchingListRow.returnPaymentSources,
+        refundPaymentSourceName: matchingListRow.refundPaymentSourceName,
+        extraChargePaymentSourceName: matchingListRow.extraChargePaymentSourceName,
+      } : {}) });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được chi tiết phiếu.");
       setDetail(null);
@@ -227,6 +243,27 @@ function ReturnsPageClient() {
     }).catch(() => {});
   }, []);
 
+  const findSourceName = (id?: string | null, name?: string | null) => name || (id ? `Nguồn tiền ${id}` : "Chưa ghi nguồn tiền");
+  const returnCashFlows = (row: ReturnRow) => {
+    const recorded = row.returnPaymentSources || [];
+    if (recorded.length) return recorded.map((entry) => ({
+      label: entry.direction === "OUT" ? "Hoàn khách" : "Thu thêm",
+      source: entry.sourceName || "Chưa rõ nguồn",
+      amount: Number(entry.amount || 0),
+    }));
+    const result: Array<{ label: string; source: string; amount: number }> = [];
+    if (Number(row.refundAmount || 0) > 0) result.push({ label: "Hoàn khách", source: findSourceName(row.refundPaymentSourceId, row.refundPaymentSourceName), amount: Number(row.refundAmount) });
+    if (Number(row.extraChargeAmount || 0) > 0) result.push({ label: "Thu thêm", source: findSourceName(row.extraChargePaymentSourceId, row.extraChargePaymentSourceName), amount: Number(row.extraChargeAmount) });
+    return result;
+  };
+
+  const productSummary = (row: ReturnRow, itemType: "RETURN" | "EXCHANGE") => {
+    const matching = (row.items || []).filter((item) => itemType === "EXCHANGE" ? String(item.itemType || "").toUpperCase() === "EXCHANGE" : String(item.itemType || "RETURN").toUpperCase() !== "EXCHANGE");
+    return matching.map((item) => ({
+      name: [item.productName || item.sku || "Sản phẩm", item.color, item.size].filter(Boolean).join(" · "),
+      qty: Number(item.qty || 0),
+    }));
+  };
   const returnItems = (detail?.items || []).filter((item) => item.itemType !== "EXCHANGE");
   const exchangeItems = (detail?.items || []).filter((item) => item.itemType === "EXCHANGE");
 
@@ -413,7 +450,7 @@ function ReturnsPageClient() {
           ) : null}
 
           <div className="overflow-auto">
-            <div className="grid min-w-[1080px] grid-cols-[150px_150px_110px_120px_120px_120px_130px_150px_1fr] bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase text-neutral-500">
+            <div className="grid min-w-[1810px] grid-cols-[145px_125px_100px_105px_105px_105px_115px_135px_300px_260px_1fr_95px] bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase text-neutral-500">
               <div>Mã phiếu</div>
               <div>Ngày tạo</div>
               <div>Trạng thái</div>
@@ -422,16 +459,17 @@ function ReturnsPageClient() {
               <div>Chênh lệch</div>
               <div>Chi nhánh nhận</div>
               <div>Nhân viên xử lý</div>
+              <div>Sản phẩm trả / đổi</div>
+              <div>Nguồn tiền / thanh toán</div>
               <div>Ghi chú</div>
+              <div>Xem nhanh</div>
             </div>
 
             {returnRows.length ? (
               returnRows.map((row) => (
-                <button
+                <div
                   key={row.id}
-                  type="button"
-                  onClick={() => void openDetail(row.id)}
-                  className={`grid min-w-[1080px] grid-cols-[150px_150px_110px_120px_120px_120px_130px_150px_1fr] items-center border-t border-neutral-100 px-4 py-3 text-left text-sm hover:bg-neutral-50 ${
+                  className={`grid min-w-[1810px] grid-cols-[145px_125px_100px_105px_105px_105px_115px_135px_300px_260px_1fr_95px] items-center border-t border-neutral-100 px-4 py-3 text-left text-sm hover:bg-neutral-50 ${
                     selectedReturnId === row.id ? "bg-neutral-50" : ""
                   }`}
                 >
@@ -447,8 +485,29 @@ function ReturnsPageClient() {
                   <div>{money(Math.abs(Number(row.differenceAmount || 0)))}</div>
                   <div>{row.returnReceiveBranchId || "—"}</div>
                   <div>{row.handledByStaffName || "—"}</div>
+                  <div className="space-y-1.5 pr-3 text-xs">
+                    {productSummary(row, "RETURN").length ? (
+                      <div><b className="text-red-700">Trả:</b> {productSummary(row, "RETURN").map((item) => `${item.name} ×${item.qty}`).join("; ")}</div>
+                    ) : null}
+                    {productSummary(row, "EXCHANGE").length ? (
+                      <div><b className="text-blue-700">Đổi:</b> {productSummary(row, "EXCHANGE").map((item) => `${item.name} ×${item.qty}`).join("; ")}</div>
+                    ) : null}
+                    {!(row.items || []).length ? <span className="text-neutral-400">Chưa có sản phẩm</span> : null}
+                  </div>
+                  <div className="space-y-1 text-xs">
+                    {(row.originalPaymentSources || []).filter((entry) => Number(entry.amount) > 0).map((entry, index) => (
+                      <div key={`original-${index}`} className="text-neutral-600">Đơn gốc: {entry.sourceName} · {money(entry.amount)}</div>
+                    ))}
+                    {returnCashFlows(row).map((entry, index) => (
+                      <div key={`return-${index}`} className={entry.label === "Hoàn khách" ? "text-red-700" : "text-emerald-700"}>
+                        {entry.label}: {entry.source} · {money(entry.amount)}
+                      </div>
+                    ))}
+                    {!(row.originalPaymentSources || []).length && !returnCashFlows(row).length ? <span className="text-neutral-400">Chưa ghi nguồn tiền</span> : null}
+                  </div>
                   <div className="truncate text-xs text-neutral-500">{row.note || "—"}</div>
-                </button>
+                  <div><button type="button" onClick={() => void openDetail(row.id)} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 hover:border-neutral-950 hover:bg-neutral-50">Xem nhanh</button></div>
+                </div>
               ))
             ) : (
               <div className="px-4 py-10 text-center text-sm text-neutral-400">
@@ -555,6 +614,15 @@ function ReturnsPageClient() {
               </div>
 
               <div className="rounded-2xl border border-neutral-200 p-4 text-sm">
+                <div className="mb-3 text-xs font-semibold uppercase text-neutral-500">Nguồn tiền hoàn / thu thêm</div>
+                {returnCashFlows(detail).length ? returnCashFlows(detail).map((entry, index) => (
+                  <div key={`cashflow-${index}`} className="mb-2">
+                    <InfoLine label={`${entry.label} · ${entry.source}`} value={money(entry.amount)} />
+                  </div>
+                )) : <div className="text-xs text-neutral-400">Không phát sinh hoàn tiền hoặc thu thêm trên phiếu.</div>}
+              </div>
+
+              <div className="rounded-2xl border border-neutral-200 p-4 text-sm">
                 <InfoLine label="Tiền hàng trả" value={money(detail.returnAmount)} />
                 <InfoLine label="Tiền hàng đổi" value={money(detail.exchangeAmount)} />
                 <InfoLine label="Chênh lệch" value={money(Math.abs(Number(detail.differenceAmount || 0)))} />
@@ -590,6 +658,72 @@ function ReturnsPageClient() {
           )}
         </aside>
       </div>
+      {quickViewOpen ? (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/45 p-3 md:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) setQuickViewOpen(false); }}>
+          <div role="dialog" aria-modal="true" aria-label="Xem nhanh phiếu đổi trả" className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-4 border-b border-neutral-200 px-5 py-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Xem nhanh phiếu đổi / trả</div>
+                <h3 className="mt-1 text-lg font-bold text-neutral-950">{detail?.code || returnRows.find((row) => row.id === selectedReturnId)?.code || "Phiếu đổi trả"}</h3>
+              </div>
+              <button type="button" onClick={() => setQuickViewOpen(false)} className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-semibold">Đóng ✕</button>
+            </div>
+            <div className="overflow-y-auto p-5">
+              {detailLoading ? <p className="py-12 text-center text-sm text-neutral-500">Đang tải chi tiết phiếu...</p> : detail ? (
+                <div className="space-y-5">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2 rounded-2xl bg-neutral-50 p-4 text-sm">
+                      <InfoLine label="Mã phiếu" value={detail.code} />
+                      <InfoLine label="Đơn gốc" value={detail.originalOrder?.orderCode || detail.originalOrderId || "—"} />
+                      <InfoLine label="Ngày tạo" value={detail.createdAt || "—"} />
+                      <InfoLine label="Trạng thái" value={detail.status || "—"} />
+                      <InfoLine label="Loại phiếu" value={detail.type === "RETURN_EXCHANGE" ? "Đổi hàng" : "Trả hàng"} />
+                    </div>
+                    <div className="space-y-2 rounded-2xl bg-neutral-50 p-4 text-sm">
+                      <InfoLine label="Nhân viên xử lý" value={detail.handledByStaffName || "—"} />
+                      <InfoLine label="Chi nhánh nhận" value={detail.returnReceiveBranchId || "—"} />
+                      <InfoLine label="Chi nhánh bán gốc" value={detail.originalBranchId || "—"} />
+                      <InfoLine label="Khách hàng" value={detail.originalOrder?.customerName || "—"} />
+                      <InfoLine label="SĐT" value={detail.originalOrder?.customerPhone || "—"} />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {(["RETURN", "EXCHANGE"] as const).map((kind) => (
+                      <div key={kind} className="rounded-2xl border border-neutral-200 p-4">
+                        <h4 className="mb-3 text-sm font-bold">{kind === "RETURN" ? "Sản phẩm khách trả" : "Sản phẩm khách đổi"}</h4>
+                        <div className="space-y-2">{productSummary(detail, kind).length ? productSummary(detail, kind).map((item, index) => (
+                          <div key={index} className="flex justify-between gap-3 rounded-xl bg-neutral-50 p-3 text-sm"><span>{item.name}</span><b>×{item.qty}</b></div>
+                        )) : <p className="text-xs text-neutral-400">Không có sản phẩm.</p>}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-2xl border border-neutral-200 p-4 text-sm">
+                      <h4 className="mb-3 font-bold">Tiền trả / đổi</h4>
+                      <div className="space-y-2">
+                        <InfoLine label="Giá trị hàng trả" value={money(detail.returnAmount)} />
+                        <InfoLine label="Giá trị hàng đổi" value={money(detail.exchangeAmount)} />
+                        <InfoLine label="Hoàn khách" value={money(detail.refundAmount)} />
+                        <InfoLine label="Khách bù thêm" value={money(detail.extraChargeAmount)} />
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-neutral-200 p-4 text-sm">
+                      <h4 className="mb-3 font-bold">Nguồn tiền</h4>
+                      <div className="space-y-2">
+                        {(detail.originalPaymentSources || []).map((entry, index) => <InfoLine key={`old-${index}`} label={`Đơn gốc · ${entry.sourceName}`} value={money(entry.amount)} />)}
+                        {returnCashFlows(detail).map((entry, index) => <InfoLine key={`new-${index}`} label={`${entry.label} · ${entry.source}`} value={money(entry.amount)} />)}
+                        {!(detail.originalPaymentSources || []).length && !returnCashFlows(detail).length ? <p className="text-xs text-neutral-400">Chưa có nguồn tiền được ghi nhận.</p> : null}
+                      </div>
+                    </div>
+                  </div>
+                  {detail.note ? <p className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600"><b>Ghi chú:</b> {detail.note}</p> : null}
+                  <div className="flex justify-end"><Link href={`/returns/${encodeURIComponent(detail.id)}`} className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-semibold">Mở trang chi tiết</Link></div>
+                </div>
+              ) : <p className="py-12 text-center text-sm text-red-600">Không tải được chi tiết phiếu. Có thể thử mở lại.</p>}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

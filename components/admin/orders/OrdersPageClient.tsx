@@ -719,7 +719,7 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: "paymentDotStatus", label: "TT thanh toán", defaultVisible: true },
   { key: "paymentStatus", label: "Thanh toán", defaultVisible: true },
   { key: "codReconciliation", label: "Đối soát", defaultVisible: true },
-  { key: "partialReturnOrder", label: "Đơn trả hàng", defaultVisible: true },
+  { key: "partialReturnOrder", label: "Đơn đổi - trả hàng", defaultVisible: true },
   { key: "partialDeliveryOrder", label: "Đơn giao 1 phần", defaultVisible: true },
   { key: "stockOutStatus", label: "TT xuất kho", defaultVisible: true },
   { key: "fulfillmentStatus", label: "Giao vận", defaultVisible: true },
@@ -1575,6 +1575,7 @@ function hasPartialReturnOrderInList(
   const anyOrder: any = order || {};
   const orderCode = normalizePartialOrderCode(anyOrder.orderCode);
   if (!orderCode || orderCode.endsWith("_PR")) return false;
+  if (Array.isArray(anyOrder.returnTicketSummaries) && anyOrder.returnTicketSummaries.length > 0) return true;
 
   const explicitReturnCode = normalizePartialOrderCode(
     getExplicitPartialReturnOrderCode(order),
@@ -1585,6 +1586,58 @@ function hasPartialReturnOrderInList(
   }
 
   return returnOrderCodeSet.has(`${orderCode}_PR`);
+}
+
+// RTN khác PDL: RTN là khách đổi/trả sau khi nhận hàng; PDL là chỉ nhận một phần lúc giao.
+// Chỉ dùng phiếu COMPLETED để xác định hàng thực trả, không tính phiếu chờ thu hồi.
+function returnDotState(order: AdminOrder, returnOrderCodeSet: Set<string>): DotState {
+  const tickets = ((order as any).returnTicketSummaries || []) as Array<{
+    status?: string; items?: Array<{ type?: string; qty?: number }>;
+  }>;
+  const completed = tickets.filter((ticket) => String(ticket.status || "").toUpperCase() === "COMPLETED");
+  const returnedQty = completed.reduce((sum, ticket) => sum + (ticket.items || [])
+    .filter((item) => String(item.type || "RETURN").toUpperCase() === "RETURN")
+    .reduce((itemSum, item) => itemSum + Math.max(0, Number(item.qty || 0)), 0), 0);
+  const orderItems = Array.isArray(order.items) ? order.items : [];
+  const originalQty = orderItems.reduce((sum: number, item: any) =>
+    sum + Math.max(0, Number(item.qty ?? item.quantity ?? 0)), 0);
+
+  if (returnedQty > 0) {
+    // Thiếu tổng SL đơn gốc thì không được khẳng định trả toàn bộ.
+    return originalQty > 0 && returnedQty >= originalQty ? "filled" : "partial";
+  }
+  // Đơn đổi/trả cũ chỉ có liên kết _PR, chưa đủ chứng cứ tỷ lệ hàng trả.
+  if (hasPartialReturnOrderInList(order, returnOrderCodeSet) && !tickets.length) return "partial";
+  return "empty";
+}
+
+function ReturnOrderDot({ state, title }: { state: DotState; title: string }) {
+  return (
+    <span title={title} aria-label={title} className="relative inline-flex h-4 w-4 shrink-0 overflow-hidden rounded-full border-2 border-neutral-800 bg-white">
+      {state === "filled" ? <span className="absolute inset-0 bg-neutral-900" /> : null}
+      {state === "partial" ? <span className="absolute inset-y-0 left-0 w-1/2 bg-neutral-900" /> : null}
+    </span>
+  );
+}
+
+function returnBadgeText(order: AdminOrder) {
+  const tickets = ((order as any).returnTicketSummaries || []) as Array<{
+    code?: string; status?: string; note?: string | null;
+    items?: Array<{ type?: string; name?: string; qty?: number }>;
+  }>;
+  if (!tickets.length) return "";
+  return tickets.slice(0, 2).map((ticket) => {
+    const parts = (ticket.items || []).filter((i) => String(i.type || "RETURN").toUpperCase() === "RETURN")
+      .map((i) => `${i.name || "Sản phẩm"} ×${i.qty || 0}`);
+    const exchanges = (ticket.items || []).filter((i) => String(i.type || "").toUpperCase() === "EXCHANGE")
+      .map((i) => `${i.name || "Sản phẩm"} ×${i.qty || 0}`);
+    return [ticket.code, parts.length ? `Trả: ${parts.join(", ")}` : "", exchanges.length ? `Đổi: ${exchanges.join(", ")}` : "", ticket.note ? `Ghi chú: ${ticket.note}` : ""].filter(Boolean).join(" · ");
+  }).join(" | ");
+}
+
+function partialDeliveryBadgeText(order: AdminOrder) {
+  const records = ((order as any).partialDeliverySummaries || []) as Array<{ code?: string; note?: string | null }>;
+  return records.slice(0, 2).map((r) => [r.code, r.note].filter(Boolean).join(" · ")).join(" | ");
 }
 
 function ListDot({ active, title }: { active: boolean; title: string }) {
@@ -4237,7 +4290,7 @@ const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
   paymentDotStatus: "Trạng thái thanh toán",
   paymentStatus: "Thanh toán",
   codReconciliation: "Đối soát COD",
-  partialReturnOrder: "Đơn trả hàng",
+  partialReturnOrder: "Đơn đổi - trả hàng",
   partialDeliveryOrder: "Đơn giao 1 phần",
   stockOutStatus: "Trạng thái xuất kho",
   fulfillmentStatus: "Giao vận",
@@ -4372,9 +4425,9 @@ function getOrderExportRows(
     if ((columns as any).codReconciliation)
       row["Đối soát COD"] = codReconciliationListLabel(order);
     if ((columns as any).partialReturnOrder)
-      row["Đơn trả hàng"] = hasPartialReturnOrderInList(order, partialReturnOrderCodeSet)
-        ? "Có"
-        : "Không";
+      row["Đơn đổi - trả hàng"] = returnDotState(order, partialReturnOrderCodeSet) === "filled"
+        ? "Trả toàn bộ"
+        : returnDotState(order, partialReturnOrderCodeSet) === "partial" ? "Trả một phần" : "Chưa trả";
     if ((columns as any).partialDeliveryOrder)
       row["Đơn giao 1 phần"] = isPartialDeliveryListOrder(order) ? "Có" : "Không";
     if (columns.stockOutStatus)
@@ -7495,8 +7548,8 @@ getPaidRevenueAmount(o)
     paymentDotStatus: "w-[120px]",
     paymentStatus: "w-[150px]",
     codReconciliation: "w-[105px]",
-    partialReturnOrder: "w-[120px]",
-    partialDeliveryOrder: "w-[135px]",
+    partialReturnOrder: "w-[360px]",
+    partialDeliveryOrder: "w-[280px]",
     stockOutStatus: "w-[115px]",
     fulfillmentStatus: "w-[135px]",
     branch: "w-[120px]",
@@ -7682,10 +7735,18 @@ getPaidRevenueAmount(o)
             key={key}
             className="border-b border-neutral-100 px-3 py-3 text-center"
           >
-            <ListDot
-              active={hasPartialReturnOrderInList(order, partialReturnOrderCodeSet)}
-              title={hasPartialReturnOrderInList(order, partialReturnOrderCodeSet) ? "Có đơn trả hàng _PR" : "Chưa có đơn trả hàng _PR"}
-            />
+            <div className="flex max-w-[420px] items-center gap-2 text-left">
+              <ReturnOrderDot
+                state={returnDotState(order, partialReturnOrderCodeSet)}
+                title={returnDotState(order, partialReturnOrderCodeSet) === "filled" ? "Đã trả toàn bộ sản phẩm" : returnDotState(order, partialReturnOrderCodeSet) === "partial" ? "Đã trả một phần sản phẩm" : "Chưa có hàng trả hoàn tất"}
+              />
+              {returnBadgeText(order) ? (
+                <span className="max-w-[370px] whitespace-normal text-[11px] leading-4 text-neutral-700" title={returnBadgeText(order)}>
+                  <span className="font-semibold">{returnDotState(order, partialReturnOrderCodeSet) === "filled" ? "Trả toàn bộ" : returnDotState(order, partialReturnOrderCodeSet) === "partial" ? "Trả một phần" : "Chờ trả"}</span>
+                  {" · "}{returnBadgeText(order)}
+                </span>
+              ) : null}
+            </div>
           </td>
         );
       case "partialDeliveryOrder":
@@ -7694,10 +7755,13 @@ getPaidRevenueAmount(o)
             key={key}
             className="border-b border-neutral-100 px-3 py-3 text-center"
           >
-            <ListDot
-              active={isPartialDeliveryListOrder(order)}
-              title={isPartialDeliveryListOrder(order) ? "Đơn giao hàng 1 phần" : "Không phải đơn giao hàng 1 phần"}
-            />
+            <div className="flex max-w-[330px] items-center gap-2 text-left">
+              <ListDot
+                active={isPartialDeliveryListOrder(order) || Boolean(((order as any).partialDeliverySummaries || []).length)}
+                title={partialDeliveryBadgeText(order) || (isPartialDeliveryListOrder(order) ? "Đơn giao hàng 1 phần" : "Không phải đơn giao hàng 1 phần")}
+              />
+              {partialDeliveryBadgeText(order) ? <span className="max-w-[280px] whitespace-normal text-[11px] leading-4 text-neutral-700" title={partialDeliveryBadgeText(order)}>{partialDeliveryBadgeText(order)}</span> : null}
+            </div>
           </td>
         );
       case "stockOutStatus":
