@@ -4844,6 +4844,8 @@ export default function OrdersPageClient() {
   const [showSmartSearchHelp, setShowSmartSearchHelp] = useState(false);
 
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [bulkReconcilingCod, setBulkReconcilingCod] = useState(false);
+  const [bulkReconcileResult, setBulkReconcileResult] = useState<any>(null);
   const [savingOrderStatus, setSavingOrderStatus] = useState(false);
   const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
   const [deletingOrders, setDeletingOrders] = useState(false);
@@ -6686,6 +6688,48 @@ export default function OrdersPageClient() {
     }
 
     setCheckedIds((prev) => Array.from(new Set([...prev, ...allVisibleIds])));
+  };
+
+  const reconcileCheckedOrders = async () => {
+    if (bulkReconcilingCod || !checkedOrders.length) return;
+    const orderCodes = [...new Set(checkedOrders.map((order) => String(order.orderCode || "").trim()).filter(Boolean))];
+    if (!orderCodes.length) {
+      setActionMessage("Các đơn được chọn chưa có mã đơn hợp lệ.");
+      return;
+    }
+    if (orderCodes.length > 500) {
+      setActionMessage("Mỗi lần đối soát tối đa 500 đơn. Hãy chọn ít đơn hơn.");
+      return;
+    }
+    setBulkReconcilingCod(true);
+    setActionMessage("");
+    try {
+      // Cùng API với nút 'Chạy đối soát mã đã paste', nhưng gửi mã đơn đã tích trực tiếp.
+      // Chỉ tạo phiên DRAFT; không tự ghi COD HVC, xác nhận hay thanh toán.
+      const response = await apiFetch("/finance/ghn-cod-reconciliation/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          codesText: orderCodes.join("\n"),
+          note: `Đối soát hàng loạt từ danh sách đơn hàng (${orderCodes.length} đơn)`,
+        }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = Array.isArray(json?.message) ? json.message.join(", ") : json?.message;
+        throw new Error(message || "Không thể tạo phiên đối soát.");
+      }
+      const resultRows: any[] = Array.isArray(json?.rows) ? json.rows : [];
+      const unmatched = resultRows.filter((row) =>
+        (row.issueTypes || []).includes("NOT_FOUND_INTERNAL_ORDER"),
+      ).length;
+      setBulkReconcileResult(json);
+      setActionMessage(`Đã tạo phiên đối soát nháp cho ${resultRows.length || orderCodes.length} đơn; ${unmatched} đơn chưa tìm thấy. Chưa nhập COD đối tác HVC và chưa xác nhận thanh toán.`);
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : "Đối soát hàng loạt thất bại.");
+    } finally {
+      setBulkReconcilingCod(false);
+    }
   };
 
   const openSelectedOrderNoteEditor = () => {
@@ -9223,6 +9267,16 @@ getPaidRevenueAmount(o)
                     </button>
                   ) : null}
 
+                  <button
+                    type="button"
+                    onClick={() => void reconcileCheckedOrders()}
+                    disabled={bulkReconcilingCod || !checkedOrders.length}
+                    title="Tạo phiên đối soát COD nháp cho các đơn đã tích; không tự xác nhận thu tiền"
+                    className="h-9 min-w-[124px] rounded-2xl bg-neutral-950 px-4 text-xs font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {bulkReconcilingCod ? "Đang đối soát..." : `Đối soát COD (${checkedOrders.length})`}
+                  </button>
+
                   {canCreateOrder && singleCheckedOrder ? (
                     <button
                       type="button"
@@ -10410,6 +10464,44 @@ getPaidRevenueAmount(o)
                   >
                     {savingOrderNote ? "Đang lưu..." : "Lưu ghi chú"}
                   </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {bulkReconcileResult ? (
+            <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Kết quả đối soát COD">
+              <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div className="flex items-start justify-between gap-4 border-b border-neutral-200 p-5">
+                  <div>
+                    <h3 className="text-lg font-bold text-neutral-950">Đã tạo phiên đối soát COD</h3>
+                    <p className="mt-1 text-xs text-neutral-500">Phiên nháp · Không tự xác nhận thanh toán hoặc điền COD đối tác</p>
+                  </div>
+                  <button type="button" onClick={() => setBulkReconcileResult(null)} className="rounded-lg border border-neutral-200 px-3 py-2 text-sm">Đóng</button>
+                </div>
+                <div className="space-y-3 overflow-y-auto p-5 text-sm">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Tổng đơn</p><b>{bulkReconcileResult?.batch?.totalRows ?? bulkReconcileResult?.rows?.length ?? 0}</b></div>
+                    <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Khớp</p><b>{bulkReconcileResult?.batch?.matchedRows ?? 0}</b></div>
+                    <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Cần kiểm tra</p><b>{bulkReconcileResult?.batch?.mismatchRows ?? 0}</b></div>
+                  </div>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    Chưa có số tiền COD HVC thực trả thì dòng vẫn cần kiểm tra. Không được coi đơn đã thu tiền chỉ vì đã tạo phiên đối soát.
+                  </div>
+                  <div className="max-h-60 overflow-auto rounded-xl border border-neutral-200">
+                    {(Array.isArray(bulkReconcileResult?.rows) ? bulkReconcileResult.rows : []).map((row: any, index: number) => (
+                      <div key={row.reconciliationRowId || index} className="flex items-start justify-between gap-3 border-b border-neutral-100 px-3 py-2 last:border-0">
+                        <div><b>{row.systemOrderCode || row.inputCode || "—"}</b><p className="mt-0.5 text-xs text-neutral-500">{row.ghnOrderCode || "—"}</p></div>
+                        <span className="text-right text-xs text-neutral-600">{(row.issueTypes || []).includes("NOT_FOUND_INTERNAL_ORDER") ? "Không tìm thấy đơn" : (row.issueTypes || []).includes("MISSING_PARTNER_COD") ? "Chờ nhập COD HVC" : row.reconciliationStatus || "Cần kiểm tra"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2 border-t border-neutral-200 p-4">
+                  <button type="button" onClick={() => setBulkReconcileResult(null)} className="rounded-xl border border-neutral-300 px-4 py-2 text-sm font-semibold">Đóng</button>
+                  {bulkReconcileResult?.batch?.id ? (
+                    <a href={`/finance/ghn-reconciliation/history/${encodeURIComponent(bulkReconcileResult.batch.id)}`} className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-semibold text-white">Xem chi tiết phiên</a>
+                  ) : null}
                 </div>
               </div>
             </div>
