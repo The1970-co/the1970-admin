@@ -561,7 +561,6 @@ export default function SettingsPage() {
   const [totpSetupData, setTotpSetupData] = useState<any>(null);
   const [totpCode, setTotpCode] = useState("");
   const [totpLoading, setTotpLoading] = useState(false);
-  const [totpVerifying, setTotpVerifying] = useState(false);
   const [totpMessage, setTotpMessage] = useState("");
   const [totpError, setTotpError] = useState("");
 
@@ -2916,112 +2915,84 @@ const addWarehouse = async () => {
 
       {tab === "security" && (
         <Panel className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xl font-semibold text-neutral-900">
-                Google Authenticator
-              </h3>
-              <p className="mt-1 text-sm text-neutral-500">
-                Dùng để xác nhận giao hàng 1 phần, sửa COD và thao tác nhạy cảm.
-              </p>
-            </div>
-          </div>
+          <h3 className="text-xl font-semibold text-neutral-900">Google Authenticator</h3>
+          <p className="mt-1 text-sm text-neutral-500">
+            Thêm điện thoại vào mã xác nhận COD đang sử dụng. Không tạo lại hoặc thay đổi mã cũ.
+          </p>
 
           <div className="mt-5 grid gap-6 xl:grid-cols-[260px_1fr]">
             <div className="flex min-h-[260px] items-center justify-center rounded-3xl border border-dashed border-neutral-300 bg-neutral-50 p-4">
               {totpSetupData?.qrCodeDataUrl ? (
                 <img
                   src={totpSetupData.qrCodeDataUrl}
-                  alt="QR"
+                  alt="QR Authenticator hiện tại để thêm điện thoại"
                   className="h-56 w-56 rounded-2xl bg-white object-contain p-2"
                 />
               ) : (
                 <div className="text-center text-sm text-neutral-500">
-                  Bấm tạo mã QR để cài authen.
+                  Nhập mã Authenticator hiện tại để hiển thị QR cho điện thoại mới.
                 </div>
               )}
             </div>
 
             <div className="space-y-4">
-              <div className="rounded-3xl bg-neutral-50 p-4">
-                <div className="font-semibold text-neutral-900">
-                  Cách cài
-                </div>
-
-                <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-neutral-600">
-                  <li>Bấm “Tạo mã QR”.</li>
-                  <li>Mở Google Authenticator trên điện thoại.</li>
-                  <li>Quét mã QR.</li>
-                  <li>Nhập mã 6 số để bật authen.</li>
-                </ol>
+              <div className="rounded-3xl bg-neutral-50 p-4 text-sm text-neutral-600">
+                <div className="font-semibold text-neutral-900">Thêm điện thoại</div>
+                <p className="mt-2">
+                  Nhập mã 6 số đang hiện trên điện thoại cũ, bấm “Hiển thị QR hiện tại”,
+                  rồi dùng Google Authenticator ở điện thoại mới để quét.
+                  Không cần bật Authenticator lại.
+                </p>
               </div>
 
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  value={totpCode}
+                  onChange={(e) => {
+                    setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                    setTotpSetupData(null);
+                    setTotpMessage("");
+                  }}
+                  placeholder="Mã hiện tại 6 số"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                />
                 <Button
+                  disabled={totpLoading || totpCode.length !== 6}
                   onClick={async () => {
                     try {
                       setTotpLoading(true);
                       setTotpError("");
-
-                      const data = await apiJson("/auth/totp/setup", {
+                      setTotpMessage("");
+                      setTotpSetupData(null);
+                      const data = await apiJson("/auth/totp/existing-qr", {
                         method: "POST",
+                        body: JSON.stringify({ code: totpCode }),
                       });
-
                       setTotpSetupData(data);
+                      setTotpCode("");
+                      setTotpMessage(data?.message || "Đã hiển thị QR hiện tại.");
                     } catch (err: any) {
-                      setTotpError(err?.message || "Không tạo được QR.");
+                      setTotpError(err?.message || "Không lấy được QR hiện tại.");
                     } finally {
                       setTotpLoading(false);
                     }
                   }}
                 >
-                  {totpLoading ? "Đang tạo..." : "Tạo mã QR"}
+                  {totpLoading ? "Đang xác thực..." : "Hiển thị QR hiện tại"}
                 </Button>
-
-                <input
-                  value={totpCode}
-                  onChange={(e) =>
-                    setTotpCode(
-                      e.target.value.replace(/\D/g, "").slice(0, 6)
-                    )
-                  }
-                  placeholder="Nhập mã 6 số"
-                  className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                />
-
-                <Button
-                  variant="secondary"
-                  onClick={async () => {
-                    try {
-                      setTotpVerifying(true);
-                      setTotpError("");
-
-                      const data = await apiJson(
-                        "/auth/totp/verify-setup",
-                        {
-                          method: "POST",
-                          body: JSON.stringify({
-                            code: totpCode,
-                          }),
-                        }
-                      );
-
-                      setTotpMessage(
-                        data?.message || "Đã bật authen."
-                      );
-                    } catch (err: any) {
-                      setTotpError(
-                        err?.message || "Mã authen không đúng."
-                      );
-                    } finally {
-                      setTotpVerifying(false);
-                    }
-                  }}
-                >
-                  {totpVerifying
-                    ? "Đang xác nhận..."
-                    : "Bật authen"}
-                </Button>
+                {totpSetupData?.qrCodeDataUrl ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setTotpSetupData(null);
+                      setTotpMessage("");
+                    }}
+                  >
+                    Ẩn QR
+                  </Button>
+                ) : null}
               </div>
 
               {totpMessage ? (
@@ -3029,12 +3000,14 @@ const addWarehouse = async () => {
                   {totpMessage}
                 </div>
               ) : null}
-
               {totpError ? (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {totpError}
                 </div>
               ) : null}
+              <p className="text-xs text-neutral-500">
+                QR chứa khóa bảo mật. Chỉ quét trên điện thoại tin cậy, không chụp hoặc chia sẻ QR.
+              </p>
             </div>
           </div>
         </Panel>
