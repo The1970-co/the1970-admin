@@ -93,13 +93,16 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
   const [query, setQuery] = useState("");
   const [issueFilter, setIssueFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
-  const [editingCodRowId, setEditingCodRowId] = useState<string | null>(null);
-  const [codDraft, setCodDraft] = useState("");
-  const [savingCodRowId, setSavingCodRowId] = useState<string | null>(null);
+  const [codEdits, setCodEdits] = useState<Record<string, string>>({});
+  const [savingAllCod, setSavingAllCod] = useState(false);
   const [confirmingBatch, setConfirmingBatch] = useState(false);
 
   async function confirmReconciliation() {
-    if (!batchId || !data?.rows?.length || confirmingBatch) return;
+    if (!batchId || !data?.rows?.length || confirmingBatch || savingAllCod) return;
+    if (pendingCodRows.length) {
+      setMessage(`Còn ${pendingCodRows.length} dòng COD HVC chưa lưu. Bấm “Lưu tất cả COD” trước khi xác nhận.`);
+      return;
+    }
     const eligible = data.rows.filter((row) => !isConfirmedRow(row) && !isPaidRow(row));
     const unresolved = eligible.filter((row) => {
       const issues = normalizeIssues(row.issues);
@@ -138,32 +141,72 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
     }
   }
 
-  async function savePartnerCod(row: HistoryRow) {
-    const normalized = codDraft.trim().replace(/[.\s]/g, "");
-    if (!/^\d+$/.test(normalized)) {
-      setMessage("Nhập COD đối tác HVC là số nguyên không âm, kể cả 0đ.");
+  // Giữ bản nhập ở client. COD 0đ chỉ được ghi DB sau khi bấm Lưu tất cả.
+  // Ghi tuần tự để recalculateBatchTotals ở backend không bị tranh chấp giữa các request.
+  async function saveAllPartnerCod() {
+    if (savingAllCod || !batchId || !data?.rows?.length) return;
+    const targets = pendingCodRows;
+    if (!targets.length) {
+      setMessage("Không có số COD HVC nào cần lưu.");
       return;
     }
-    setSavingCodRowId(row.id);
+    const amounts = new Map<string, number>();
+    for (const row of targets) {
+      const raw = getCodInputValue(row).trim().replace(/[.,\s]/g, "");
+      if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+        setMessage(`COD HVC của đơn ${row.orderCode || row.ghnCode || row.id} phải là số nguyên từ 0 trở lên.`);
+        return;
+      }
+      amounts.set(row.id, Number(raw));
+    }
+    setSavingAllCod(true);
     setMessage("");
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    let saved = 0;
+    const failures: string[] = [];
+    const successes = new Map<string, any>();
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      const res = await fetch(`${API_BASE}/finance/ghn-cod-reconciliation/rows/${encodeURIComponent(row.id)}/partner-cod`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ codAmount: Number(normalized) }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(Array.isArray(json?.message) ? json.message.join(", ") : json?.message || "Không cập nhật được COD đối tác HVC.");
-      setEditingCodRowId(null);
-      await loadDetail();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Không cập nhật được COD đối tác HVC.");
+      for (const row of targets) {
+        try {
+          const res = await fetch(`${API_BASE}/finance/ghn-cod-reconciliation/rows/${encodeURIComponent(row.id)}/partner-cod`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ codAmount: amounts.get(row.id) }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(Array.isArray(json?.message) ? json.message.join(", ") : json?.message || "Không lưu được COD");
+          successes.set(row.id, json);
+          saved++;
+        } catch (err) {
+          failures.push(`${row.orderCode || row.ghnCode || row.id}: ${err instanceof Error ? err.message : "Lỗi lưu"}`);
+        }
+      }
+      // Không bật trạng thái loading và không unmount bảng: giữ nguyên vị trí cuộn.
+      if (successes.size) {
+        setData((current) => current ? ({
+          ...current,
+          rows: current.rows.map((row) => {
+            const savedRow = successes.get(row.id);
+            return savedRow ? {
+              ...row,
+              codAmount: savedRow.codAmount,
+              totalReconcileAmount: savedRow.totalReconcileAmount,
+              reconciliationStatus: savedRow.reconciliationStatus,
+              issues: savedRow.issueTypes,
+            } : row;
+          }),
+        }) : current);
+        setCodEdits((prev) => {
+          const next = { ...prev };
+          for (const id of successes.keys()) delete next[id];
+          return next;
+        });
+      }
+      setMessage(failures.length
+        ? `Đã lưu ${saved}/${targets.length} dòng. Còn ${failures.length} dòng lỗi: ${failures.slice(0, 3).join(" | ")}`
+        : `Đã lưu COD HVC cho ${saved} dòng. Không thay đổi trạng thái xác nhận/thanh toán.`);
     } finally {
-      setSavingCodRowId(null);
+      setSavingAllCod(false);
     }
   }
 
@@ -203,6 +246,19 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
 
   const batch = data?.batch;
   const rows = Array.isArray(data?.rows) ? data.rows : [];
+  const isManualBatch = String(batch?.sourceType || "").toUpperCase().includes("MANUAL");
+  const isMissingCod = (row: HistoryRow) => normalizeIssues(row.issues).includes("MISSING_PARTNER_COD");
+  const getCodInputValue = (row: HistoryRow) => codEdits[row.id] ?? (isMissingCod(row) ? (isManualBatch ? "0" : "") : String(row.codAmount ?? 0));
+  const pendingCodRows = rows.filter((row) => {
+    if (isConfirmedRow(row) || isPaidRow(row)) return false;
+    const candidate = codEdits[row.id];
+    if (candidate !== undefined) {
+      const formatted = candidate.trim().replace(/[.,\s]/g, "");
+      if (!isMissingCod(row) && /^\d+$/.test(formatted) && Number(formatted) === Number(row.codAmount ?? 0)) return false;
+      return true;
+    }
+    return isManualBatch && isMissingCod(row);
+  });
 
   const issueOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -311,8 +367,16 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            onClick={() => void saveAllPartnerCod()}
+            disabled={loading || savingAllCod || confirmingBatch || !pendingCodRows.length}
+            className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {savingAllCod ? "Đang lưu COD..." : `Lưu tất cả COD (${pendingCodRows.length})`}
+          </button>
+          <button
+            type="button"
             onClick={() => void confirmReconciliation()}
-            disabled={loading || confirmingBatch || !rows.some((row) => !isConfirmedRow(row) && !isPaidRow(row))}
+            disabled={loading || savingAllCod || confirmingBatch || !rows.some((row) => !isConfirmedRow(row) && !isPaidRow(row))}
             className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {confirmingBatch ? "Đang xác nhận..." : "Xác nhận đối soát"}
@@ -382,7 +446,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
           <div>
             <h2 className="text-lg font-semibold text-neutral-950">Danh sách đơn trong phiên</h2>
             <p className="mt-1 text-sm text-neutral-500">
-              Đang hiển thị <b>{formatNumber(filteredRows.length)}</b> / <b>{formatNumber(rows.length)}</b> dòng.
+              Đang hiển thị <b>{formatNumber(filteredRows.length)}</b> / <b>{formatNumber(rows.length)}</b> dòng. <span className="ml-2">Các ô viền vàng chưa lưu; sửa nhiều dòng rồi bấm <b>Lưu tất cả COD</b> một lần.</span>
             </p>
           </div>
 
@@ -459,28 +523,18 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
                       {formatGhnStatus(row.ghnStatus)}
                     </td>
                     <td className="px-4 py-3 text-right font-semibold">
-                      {editingCodRowId === row.id ? (
-                        <div className="flex min-w-[170px] flex-col items-end gap-1.5">
-                          <input
-                            aria-label={`COD đối tác HVC cho ${row.orderCode || row.ghnCode || row.id}`}
-                            inputMode="numeric"
-                            value={codDraft}
-                            onChange={(e) => setCodDraft(e.target.value)}
-                            className="h-9 w-36 rounded-lg border border-neutral-300 px-2 text-right text-sm"
-                            placeholder="Nhập số tiền"
-                          />
-                          <div className="flex gap-1">
-                            <button type="button" disabled={savingCodRowId === row.id} onClick={() => void savePartnerCod(row)} className="rounded-lg bg-neutral-950 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50">Lưu</button>
-                            <button type="button" onClick={() => setEditingCodRowId(null)} className="rounded-lg border border-neutral-200 px-2 py-1 text-xs">Hủy</button>
-                          </div>
-                        </div>
+                      {!isConfirmedRow(row) && !isPaidRow(row) ? (
+                        <input
+                          aria-label={`COD đối tác HVC cho ${row.orderCode || row.ghnCode || row.id}`}
+                          inputMode="numeric"
+                          value={getCodInputValue(row)}
+                          disabled={savingAllCod || confirmingBatch}
+                          onChange={(e) => setCodEdits((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                          className={`h-9 w-32 rounded-lg border px-2 text-right text-sm disabled:opacity-50 ${pendingCodRows.some((item) => item.id === row.id) ? "border-amber-400 bg-amber-50" : "border-neutral-300 bg-white"}`}
+                          placeholder={isManualBatch ? "0" : "Chưa nhập"}
+                        />
                       ) : (
-                        <div className="flex min-w-[145px] items-center justify-end gap-2">
-                          <span>{normalizeIssues(row.issues).includes("MISSING_PARTNER_COD") ? "Chưa nhập" : money(row.codAmount)}</span>
-                          {!isConfirmedRow(row) && !isPaidRow(row) ? (
-                            <button type="button" onClick={() => { setEditingCodRowId(row.id); setCodDraft(normalizeIssues(row.issues).includes("MISSING_PARTNER_COD") ? "" : String(row.codAmount ?? "")); }} className="rounded-lg border border-neutral-300 bg-white px-2 py-1 text-xs font-semibold hover:bg-neutral-100">{normalizeIssues(row.issues).includes("MISSING_PARTNER_COD") ? "Nhập" : "Sửa"}</button>
-                          ) : null}
-                        </div>
+                        <span>{money(row.codAmount)}</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">{money(row.serviceFee)}</td>
