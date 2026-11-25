@@ -164,6 +164,58 @@ function address(order?: OrderDetail | null) {
   return parts.length ? parts.join(", ") : "—";
 }
 
+function productImageUrl(item: AnyRow): string {
+  const variant = item?.variant || item?.productVariant || {};
+  const product = item?.product || variant?.product || {};
+  const sources = [
+    item?.imageUrl, item?.imageURL, item?.thumbnailUrl, item?.thumbnail,
+    item?.productImageUrl, item?.variantImageUrl, item?.image,
+    variant?.imageUrl, variant?.thumbnailUrl, variant?.image,
+    product?.imageUrl, product?.thumbnailUrl, product?.image,
+    item?.images, variant?.images, product?.images,
+  ];
+  const asUrl = (value: unknown): string => {
+    if (typeof value === "string") return value.trim();
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const found = asUrl(entry);
+        if (found) return found;
+      }
+    }
+    if (value && typeof value === "object") {
+      const row = value as Record<string, unknown>;
+      return asUrl(row.url || row.secure_url || row.secureUrl || row.src || row.imageUrl);
+    }
+    return "";
+  };
+  for (const source of sources) {
+    const url = asUrl(source);
+    if (/^https?:\/\//i.test(url) || url.startsWith("/")) return url;
+  }
+  return "";
+}
+
+function ProductPhoto({ item }: { item: AnyRow }) {
+  const [failed, setFailed] = useState(false);
+  const url = productImageUrl(item);
+  return (
+    <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white text-neutral-400 shadow-sm">
+      {url && !failed ? (
+        <img
+          src={url}
+          alt={String(item.productName || item.name || item.sku || "Ảnh sản phẩm")}
+          className="h-full w-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Shirt className="h-5 w-5" />
+      )}
+    </div>
+  );
+}
+
 function lineQty(item: AnyRow) {
   return num(item.qty ?? item.quantity ?? item.orderedQty ?? 0);
 }
@@ -329,9 +381,7 @@ export default function MobileOrderDetailPage() {
                 {items.map((item, index) => (
                   <div key={item.id || `${item.sku}-${index}`} className="rounded-2xl bg-neutral-50 p-3">
                     <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-neutral-500 shadow-sm">
-                        <Shirt className="h-4 w-4" />
-                      </div>
+                      <ProductPhoto item={item} />
                       <div className="min-w-0 flex-1">
                         <div className="line-clamp-2 text-sm font-black text-neutral-900">
                           {item.productName || item.name || item.sku || "Sản phẩm"}

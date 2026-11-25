@@ -280,6 +280,8 @@ type ConfirmAction = {
 type ReturnExchangeSummary = {
   id: string;
   code?: string | null;
+  originalOrderId?: string | null;
+  originalOrderCode?: string | null;
   type?: string | null;
   status?: string | null;
   returnAmount?: number | string | null;
@@ -304,6 +306,9 @@ type ReturnExchangeSummary = {
     productName?: string | null;
     qty?: number | string | null;
     itemType?: string | null;
+    lineTotal?: number | string | null;
+    unitPrice?: number | string | null;
+    refundPrice?: number | string | null;
   }>;
 };
 
@@ -443,17 +448,17 @@ function returnExchangeStatusText(status?: string | null) {
   return status || "—";
 }
 
-function summarizeReturnItems(items?: ReturnExchangeSummary["items"]) {
-  if (!Array.isArray(items) || !items.length) return "Chưa có dòng sản phẩm";
-
-  return items
-    .slice(0, 5)
-    .map((item) => {
-      const name = item.sku || item.productName || "Sản phẩm";
-      const qty = Number(item.qty || 0);
-      return `${name} x${qty}`;
-    })
-    .join(", ");
+function summarizeReturnItems(items?: ReturnExchangeSummary["items"], kind?: "RETURN" | "EXCHANGE") {
+  if (!Array.isArray(items) || !items.length) return "—";
+  const selected = items.filter((item) => !kind ||
+    (kind === "RETURN" ? String(item.itemType || "RETURN").toUpperCase() !== "EXCHANGE" :
+      String(item.itemType || "").toUpperCase() === "EXCHANGE"));
+  if (!selected.length) return "—";
+  return selected.map((item) => {
+    const name = [item.productName || "Sản phẩm", item.sku ? `(${item.sku})` : null].filter(Boolean).join(" ");
+    const amount = Number(item.lineTotal ?? (Number(item.refundPrice ?? item.unitPrice ?? 0) * Number(item.qty || 0)));
+    return `${name} ×${Number(item.qty || 0)}${amount > 0 ? ` · ${currency(amount)}` : ""}`;
+  }).join("; ");
 }
 function normalizedCodReconciliationStatus(status?: string | null) {
   return String(status || "").trim().toUpperCase();
@@ -2886,7 +2891,26 @@ export default function OrderDetailPageClient({
       entries.push({
         id: `${order.id}-exchange-context`,
         title: order.exchangeContext.manualCollection ? "Liên kết thu hồi phát sinh (thủ công)" : "Giao hàng kèm thu hồi hàng đổi",
-        description: `Giao ${order.exchangeContext.deliveredItems.map(i => `${i.sku || i.productName} x${i.qty}`).join(", ")} · Thu hồi ${order.exchangeContext.returnedItems.map(i => `${i.sku || i.productName} x${i.qty}`).join(", ")} (${currency(order.exchangeContext.returnedAmount)}) · COD thu thêm ${currency(order.exchangeContext.customerCod)} · Phiếu ${order.exchangeContext.returnCode}${order.exchangeContext.manualCollection ? " (chỉ liên kết lịch sử; chưa đối soát tiền/kho)" : ""}`,
+        description: `Đơn đổi từ ${order.exchangeContext.sourceOrderCode || relatedReturns.find(r => r.exchangeOrderId === order.id)?.originalOrderCode || "đơn gốc"} · Giao ${order.exchangeContext.deliveredItems.map(i => `${i.sku || i.productName} x${i.qty}`).join(", ")} · Thu hồi ${order.exchangeContext.returnedItems.map(i => `${i.sku || i.productName} x${i.qty}`).join(", ")} (${currency(order.exchangeContext.returnedAmount)}) · COD thu thêm ${currency(order.exchangeContext.customerCod)} · Phiếu ${order.exchangeContext.returnCode}${order.exchangeContext.manualCollection ? " (chỉ liên kết lịch sử; chưa đối soát tiền/kho)" : ""}`,
+        createdAt: order.createdAt,
+        tone: "success",
+      });
+    }
+
+    // Ghi nhận quan hệ NGƯỢC trên đơn giao mới: phiếu RTN lưu ở đơn gốc,
+    // nhưng lịch sử đơn đổi cũng cần nêu rõ nó được tạo từ đơn nào.
+    const originReturn = relatedReturns.find((row) =>
+      String(row.exchangeOrderId || "") === String(order.id) &&
+      String(row.status || "").toUpperCase() !== "CANCELLED" &&
+      Boolean(row.originalOrderCode || row.originalOrderId),
+    );
+    const originOrderCode = originReturn?.originalOrderCode ||
+      (order.exchangeContext?.linkMethod === "EXPLICIT" ? order.exchangeContext.sourceOrderCode : null);
+    if (originOrderCode) {
+      entries.push({
+        id: `${order.id}-exchange-origin-${originReturn?.id || "context"}`,
+        title: "Đơn đổi được tạo từ đơn gốc",
+        description: `Đơn gốc ${originOrderCode} · Phiếu đổi/trả ${originReturn?.code || order.exchangeContext?.returnCode || "—"} · Hàng giao mới thuộc đơn ${order.orderCode}. Xem đơn gốc để theo dõi toàn bộ lịch sử đổi/trả.`,
         createdAt: order.createdAt,
         tone: "success",
       });
@@ -2963,7 +2987,9 @@ export default function OrderDetailPageClient({
           row.exchangeTrackingCode ? `Mã vận đơn: ${row.exchangeTrackingCode}` : null,
           row.exchangeCarrier ? `HVC: ${row.exchangeCarrier}` : null,
           row.handledByStaffName ? `Nhân viên xử lý: ${row.handledByStaffName}` : null,
-          summarizeReturnItems(row.items),
+          `Hàng khách trả: ${summarizeReturnItems(row.items, "RETURN")}`,
+          `Hàng giao mới: ${summarizeReturnItems(row.items, "EXCHANGE")}`,
+          row.originalOrderCode && row.exchangeOrderId === order.id ? `Đổi từ đơn gốc: ${row.originalOrderCode}` : null,
           row.note || null,
         ]
           .filter(Boolean)
@@ -5117,6 +5143,19 @@ export default function OrderDetailPageClient({
                   subtitle={`Phiếu ${viewOrder.exchangeContext.returnCode} · đơn gốc ${viewOrder.exchangeContext.sourceOrderCode || "—"}`}
                 />
                 <div className="space-y-3 px-4 py-4 text-[12px]">
+                  {relatedReturns.find(row => row.exchangeOrderId === viewOrder.id)?.originalOrderCode ? (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 font-semibold text-blue-900">
+                      Đơn giao đổi mới được tạo từ đơn gốc: {" "}
+                      <Link href={`/orders/${encodeURIComponent(relatedReturns.find(row => row.exchangeOrderId === viewOrder.id)?.originalOrderId || "")}`}
+                        className="text-blue-700 underline">
+                        {relatedReturns.find(row => row.exchangeOrderId === viewOrder.id)?.originalOrderCode}
+                      </Link>
+                    </div>
+                  ) : viewOrder.exchangeContext.sourceOrderCode ? (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 font-semibold text-blue-900">
+                      Đơn giao đổi mới từ đơn gốc {viewOrder.exchangeContext.sourceOrderCode}
+                    </div>
+                  ) : null}
                   <div className="grid gap-3 md:grid-cols-2">
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                       <p className="mb-2 font-semibold text-emerald-800">Hàng giao cho khách</p>
@@ -5478,7 +5517,7 @@ export default function OrderDetailPageClient({
               <Panel>
                 <SectionHeader
                   title="Phiếu đổi/trả liên quan"
-                  subtitle="Các phiếu trả hàng, đổi hàng đã phát sinh từ đơn gốc này."
+                  subtitle="Phiếu liên kết theo đơn gốc hoặc đơn giao đổi mới."
                 />
                 <div className="space-y-3 px-4 py-3">
                   {relatedReturns.map((row) => {
@@ -5495,7 +5534,7 @@ export default function OrderDetailPageClient({
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <Link
-                              href={`/returns/${encodeURIComponent(row.id || row.code || "")}`}
+                              href={`/returns?returnId=${encodeURIComponent(row.id || row.code || "")}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-[13px] font-bold text-blue-600 hover:underline"
@@ -5542,7 +5581,14 @@ export default function OrderDetailPageClient({
                             label="Nhân viên xử lý"
                             value={row.handledByStaffName || "—"}
                           />
-                          <DataRow label="Sản phẩm" value={summarizeReturnItems(row.items)} />
+                          {row.originalOrderCode ? (
+                            <DataRow label="Đổi/trả từ đơn gốc" value={
+                              <Link href={`/orders/${encodeURIComponent(row.originalOrderId || row.originalOrderCode)}`}
+                                className="font-semibold text-blue-600 hover:underline">{row.originalOrderCode}</Link>
+                            } />
+                          ) : null}
+                          <DataRow label="Hàng khách trả / thu hồi" value={summarizeReturnItems(row.items, "RETURN")} />
+                          <DataRow label="Hàng giao mới / đổi" value={summarizeReturnItems(row.items, "EXCHANGE")} />
                           {(["[EXCHANGE_COLLECT_ON_DELIVERY]", "[SEPARATE_COLLECTION]"].some((tag) => String(row.note || "").includes(tag))) ? (
                             <>
                               <DataRow label="Hình thức" value={String(row.note || "").includes("[SEPARATE_COLLECTION]") ? "Thu hồi riêng – nhận hàng trước, gửi đổi sau" : "Giao hàng mới, thu hồi hàng cũ cùng chuyến"} />

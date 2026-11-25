@@ -84,6 +84,8 @@ type ReturnDetail = ReturnRow & {
     refundPrice?: number;
     lineTotal?: number;
     reason?: string | null;
+    color?: string | null;
+    size?: string | null;
   }>;
   cashVouchers?: Array<{
     id: string;
@@ -243,6 +245,14 @@ function ReturnsPageClient() {
     }).catch(() => {});
   }, []);
 
+  // /returns?returnId=... opens an existing RTN in the current list page.
+  // There is no /returns/[id] route; do not navigate to a non-existent route.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const requestedId = new URLSearchParams(window.location.search).get("returnId");
+    if (requestedId) void openDetail(requestedId);
+  }, []);
+
   const findSourceName = (id?: string | null, name?: string | null) => name || (id ? `Nguồn tiền ${id}` : "Chưa ghi nguồn tiền");
   const returnCashFlows = (row: ReturnRow) => {
     const recorded = row.returnPaymentSources || [];
@@ -260,7 +270,7 @@ function ReturnsPageClient() {
   const productSummary = (row: ReturnRow, itemType: "RETURN" | "EXCHANGE") => {
     const matching = (row.items || []).filter((item) => itemType === "EXCHANGE" ? String(item.itemType || "").toUpperCase() === "EXCHANGE" : String(item.itemType || "RETURN").toUpperCase() !== "EXCHANGE");
     return matching.map((item) => ({
-      name: [item.productName || item.sku || "Sản phẩm", item.color, item.size].filter(Boolean).join(" · "),
+      name: [item.productName || item.sku || "Sản phẩm", item.color ? `Màu ${item.color}` : null, item.size ? `Size ${item.size}` : null].filter(Boolean).join(" · "),
       qty: Number(item.qty || 0),
     }));
   };
@@ -584,6 +594,7 @@ function ReturnsPageClient() {
                     {returnItems.map((item) => (
                       <div key={item.id} className="rounded-2xl bg-neutral-50 p-3 text-sm">
                         <div className="font-semibold">{item.productName || item.sku || "Sản phẩm"}</div>
+                        <ReturnVariantLabel item={item} />
                         <div className="mt-1 text-xs text-neutral-500">
                           SL {item.qty} · {money(item.lineTotal)}
                         </div>
@@ -602,6 +613,7 @@ function ReturnsPageClient() {
                     {exchangeItems.map((item) => (
                       <div key={item.id} className="rounded-2xl bg-neutral-50 p-3 text-sm">
                         <div className="font-semibold">{item.productName || item.sku || "Sản phẩm"}</div>
+                        <ReturnVariantLabel item={item} />
                         <div className="mt-1 text-xs text-neutral-500">
                           SL {item.qty} · {money(item.lineTotal)}
                         </div>
@@ -717,13 +729,24 @@ function ReturnsPageClient() {
                     </div>
                   </div>
                   {detail.note ? <p className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600"><b>Ghi chú:</b> {detail.note}</p> : null}
-                  <div className="flex justify-end"><Link href={`/returns/${encodeURIComponent(detail.id)}`} className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-semibold">Mở trang chi tiết</Link></div>
+                  <div className="flex justify-end"><Link href={`/returns?returnId=${encodeURIComponent(detail.id)}`} className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-semibold">Mở phiếu bằng đường dẫn</Link></div>
                 </div>
               ) : <p className="py-12 text-center text-sm text-red-600">Không tải được chi tiết phiếu. Có thể thử mở lại.</p>}
             </div>
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ReturnVariantLabel({ item }: { item: { sku?: string | null; color?: string | null; size?: string | null } }) {
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+      {item.sku ? <span className="rounded-lg bg-white px-2 py-1 text-neutral-600">SKU: {item.sku}</span> : null}
+      {item.color ? <span className="rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 font-semibold text-blue-700">Màu: {item.color}</span> : null}
+      {item.size ? <span className="rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1 font-semibold text-emerald-700">Size: {item.size}</span> : null}
+      {!item.color && !item.size ? <span className="text-amber-700">Chưa xác định màu/size của SKU</span> : null}
     </div>
   );
 }

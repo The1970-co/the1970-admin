@@ -1635,6 +1635,70 @@ function returnBadgeText(order: AdminOrder) {
   }).join(" | ");
 }
 
+type ExchangeHistoryRow = {
+  id?: string; code?: string; status?: string; note?: string | null;
+  depth?: number; createdAt?: string | null;
+  exchangeOrderId?: string | null; exchangeOrderCode?: string | null;
+  exchangeStatus?: string | null; exchangePaymentStatus?: string | null;
+  exchangeFulfillmentStatus?: string | null; exchangeShippingStatus?: string | null;
+  exchangeCarrier?: string | null; exchangeTrackingCode?: string | null;
+  items?: Array<{ type?: string; name?: string; sku?: string | null; qty?: number }>;
+};
+
+function exchangeHistoryStatus(row: ExchangeHistoryRow) {
+  const ship = String(row.exchangeShippingStatus || "").toUpperCase();
+  const fulfillment = String(row.exchangeFulfillmentStatus || "").toUpperCase();
+  const orderStatus = String(row.exchangeStatus || "").toUpperCase();
+  if (ship.includes("DELIVER") || ship.includes("SUCCESS") || ship.includes("FINISH")) return "Đã giao hàng mới";
+  if (ship.includes("FAIL") || ship.includes("CANCEL")) return "Giao hàng gặp vấn đề";
+  if (fulfillment === "FULFILLED" || orderStatus === "COMPLETED") return "Đơn giao mới hoàn thành";
+  if (orderStatus === "CANCELLED") return "Đơn giao mới đã hủy";
+  if (row.exchangeOrderCode) return "Đang xử lý giao hàng mới";
+  if (String(row.status || "").toUpperCase() === "COMPLETED") return "Phiếu đổi/trả hoàn tất";
+  return "Chờ xử lý đổi/trả";
+}
+
+function ExchangeHistoryTimeline({ order, compact = false }: { order: AdminOrder; compact?: boolean }) {
+  const tickets = (((order as any).returnTicketSummaries || []) as ExchangeHistoryRow[]);
+  if (!tickets.length) return null;
+  return (
+    <div className={`min-w-0 text-left ${compact ? "max-w-[480px] text-[11px]" : "text-xs"}`}>
+      <div className="flex items-center gap-2 font-semibold text-neutral-900">
+        <span className="inline-flex h-2.5 w-2.5 rounded-full bg-neutral-900" />
+        <span>Đơn gốc {order.orderCode}</span>
+      </div>
+      <div className="ml-[5px] border-l border-neutral-300 pl-3">
+        {tickets.map((ticket, index) => {
+          const returned = (ticket.items || []).filter(i => String(i.type || "RETURN").toUpperCase() !== "EXCHANGE");
+          const delivered = (ticket.items || []).filter(i => String(i.type || "").toUpperCase() === "EXCHANGE");
+          const describe = (items: typeof returned) => items.map(i => `${i.name || i.sku || "Sản phẩm"} ×${i.qty || 0}`).join(", ");
+          return (
+            <div key={ticket.id || ticket.code || index} className="relative border-b border-neutral-100 py-2 last:border-0" style={{ marginLeft: `${Math.min(ticket.depth || 0, 5) * (compact ? 8 : 14)}px` }}>
+              <span className="absolute -left-[17px] top-[13px] h-2 w-2 rounded-full border border-neutral-400 bg-white" />
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                {ticket.exchangeOrderCode ? (
+                  <>
+                    <span className="font-semibold text-neutral-800">Đơn đổi:</span>
+                    <Link href={`/orders/${encodeURIComponent(ticket.exchangeOrderId || ticket.exchangeOrderCode)}`} onClick={e => e.stopPropagation()} className="font-semibold text-blue-700 hover:underline">{ticket.exchangeOrderCode}</Link>
+                  </>
+                ) : <span className="font-semibold text-neutral-800">Phiếu đổi/trả (chưa tạo đơn mới)</span>}
+                <span className="text-neutral-400">·</span>
+                <Link href={`/returns?returnId=${encodeURIComponent(ticket.id || "")}`} onClick={e => e.stopPropagation()} className="font-semibold text-indigo-700 hover:underline">{ticket.code || "RTN"}</Link>
+              </div>
+              <div className="mt-0.5 font-medium text-neutral-700">{exchangeHistoryStatus(ticket)} · RTN {String(ticket.status || "").toUpperCase() === "COMPLETED" ? "Hoàn tất" : "Đang xử lý"}</div>
+              {delivered.length ? <div className="mt-0.5 text-emerald-800">Giao: {describe(delivered)}</div> : null}
+              {returned.length ? <div className="mt-0.5 text-rose-800">Thu hồi: {describe(returned)}</div> : null}
+              {!compact && ticket.exchangeTrackingCode ? <div className="mt-0.5 text-neutral-500">HVC {ticket.exchangeCarrier || ""} · {ticket.exchangeTrackingCode}</div> : null}
+              {!compact && ticket.note ? <div className="mt-0.5 text-neutral-500">Ghi chú: {ticket.note}</div> : null}
+              {ticket.createdAt ? <div className="mt-0.5 text-[10px] text-neutral-400">{new Date(ticket.createdAt).toLocaleString("vi-VN")}</div> : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function partialDeliveryBadgeText(order: AdminOrder) {
   const records = ((order as any).partialDeliverySummaries || []) as Array<{ code?: string; note?: string | null }>;
   return records.slice(0, 2).map((r) => [r.code, r.note].filter(Boolean).join(" · ")).join(" | ");
@@ -7592,7 +7656,7 @@ getPaidRevenueAmount(o)
     paymentDotStatus: "w-[120px]",
     paymentStatus: "w-[150px]",
     codReconciliation: "w-[105px]",
-    partialReturnOrder: "w-[360px]",
+    partialReturnOrder: "w-[480px]",
     partialDeliveryOrder: "w-[280px]",
     stockOutStatus: "w-[115px]",
     fulfillmentStatus: "w-[135px]",
@@ -7775,21 +7839,17 @@ getPaidRevenueAmount(o)
         );
       case "partialReturnOrder":
         return (
-          <td
-            key={key}
-            className="border-b border-neutral-100 px-3 py-3 text-center"
-          >
-            <div className="flex max-w-[420px] items-center gap-2 text-left">
-              <ReturnOrderDot
-                state={returnDotState(order, partialReturnOrderCodeSet)}
-                title={returnDotState(order, partialReturnOrderCodeSet) === "filled" ? "Đã trả toàn bộ sản phẩm" : returnDotState(order, partialReturnOrderCodeSet) === "partial" ? "Đã trả một phần sản phẩm" : "Chưa có hàng trả hoàn tất"}
-              />
-              {returnBadgeText(order) ? (
-                <span className="max-w-[370px] whitespace-normal text-[11px] leading-4 text-neutral-700" title={returnBadgeText(order)}>
-                  <span className="font-semibold">{returnDotState(order, partialReturnOrderCodeSet) === "filled" ? "Trả toàn bộ" : returnDotState(order, partialReturnOrderCodeSet) === "partial" ? "Trả một phần" : "Chờ trả"}</span>
-                  {" · "}{returnBadgeText(order)}
-                </span>
-              ) : null}
+          <td key={key} className="border-b border-neutral-100 px-3 py-3 align-top">
+            <div className="flex max-w-[480px] items-start gap-2 text-left">
+              <div className="mt-0.5 shrink-0">
+                <ReturnOrderDot
+                  state={returnDotState(order, partialReturnOrderCodeSet)}
+                  title={returnDotState(order, partialReturnOrderCodeSet) === "filled" ? "Đã trả toàn bộ sản phẩm" : returnDotState(order, partialReturnOrderCodeSet) === "partial" ? "Đã trả một phần sản phẩm" : "Chưa có hàng trả hoàn tất"}
+                />
+              </div>
+              {((order as any).returnTicketSummaries || []).length ? (
+                <ExchangeHistoryTimeline order={order} compact />
+              ) : returnBadgeText(order) ? <span className="text-xs text-neutral-600">{returnBadgeText(order)}</span> : null}
             </div>
           </td>
         );
@@ -10264,6 +10324,13 @@ getPaidRevenueAmount(o)
                       </p>
                     </Panel>
                   </div>
+
+                  {((quickViewOrder as any).returnTicketSummaries || []).length ? (
+                    <Panel className="mt-4 p-4">
+                      <h4 className="mb-3 font-semibold text-neutral-950">Dòng thời gian đổi / trả hàng</h4>
+                      <ExchangeHistoryTimeline order={quickViewOrder} />
+                    </Panel>
+                  ) : null}
 
                   <Panel className="mt-4 overflow-hidden">
                     <div className="border-b border-neutral-100 p-4">
