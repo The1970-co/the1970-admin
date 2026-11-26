@@ -21,6 +21,7 @@ import {
 } from "@/lib/purchase-receipts-api";
 import { getPaymentSources, type PaymentSourceItem } from "@/lib/payment-sources-api";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
+import { apiFetch } from "@/lib/api";
 
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
@@ -247,6 +248,8 @@ export default function PurchaseReceiptsPageClient() {
   const [importingId, setImportingId] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [expandedProductGroups, setExpandedProductGroups] = useState<string[]>([]);
   const [paying, setPaying] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -296,6 +299,7 @@ export default function PurchaseReceiptsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [expandedReceiptIds, setExpandedReceiptIds] = useState<string[]>([]);
+  const [focusedReceiptId, setFocusedReceiptId] = useState("");
   // Giữ nguyên vị trí nhìn khi thao tác với phiếu giữa danh sách.
   const pendingScrollY = useRef<number | null>(null);
   const [scrollRestoreVersion, setScrollRestoreVersion] = useState(0);
@@ -505,7 +509,9 @@ export default function PurchaseReceiptsPageClient() {
 
   function openReceiptInNewTab(receipt: PurchaseReceipt) {
     if (typeof window === "undefined") return;
-    window.open(`/control/purchase-receipts/${receipt.id}`, "_blank", "noopener,noreferrer");
+    const url = new URL(window.location.href);
+    url.searchParams.set("receiptId", receipt.id);
+    window.open(url.toString(), "_blank", "noopener,noreferrer");
   }
 
   function pickUnitCost(product: any, variant: any) {
@@ -531,6 +537,8 @@ export default function PurchaseReceiptsPageClient() {
       (product.variants || []).map((variant: any, variantIndex: number) => ({
         rowId: variant.id,
         variantId: variant.id,
+        productId: String(product.id || variant.productId || product.name || ""),
+        mainSku: String(product.sku || product.code || product.productCode || variant.sku?.split("-")[0] || ""),
         sku: variant.sku,
         productName: product.name,
         color: variant.color || "",
@@ -621,6 +629,20 @@ export default function PurchaseReceiptsPageClient() {
       return 0;
     });
   }, [items, draftSortBy]);
+
+  const groupedVariantOptions = useMemo(() => {
+    const map = new Map<string, { id: string; sku: string; name: string; options: typeof variantOptions }>();
+    variantOptions.forEach((item) => {
+      const id = item.productId || item.productName;
+      let group = map.get(id);
+      if (!group) {
+        group = { id, sku: item.mainSku, name: item.productName, options: [] };
+        map.set(id, group);
+      }
+      group.options.push(item);
+    });
+    return Array.from(map.values());
+  }, [variantOptions]);
 
   const receiptFilterOptions = useMemo(() => {
     const createdBy = new Map<string, string>();
@@ -1048,6 +1070,17 @@ export default function PurchaseReceiptsPageClient() {
   }
 
 
+  function addProductGroupToDraft(group: { options: typeof variantOptions }) {
+    const existingIds = new Set(items.map((item) => item.variantId));
+    const toAdd = group.options.filter((option) => !existingIds.has(option.variantId)).map((option) => ({
+      rowId: makeRowId(), variantId: option.variantId, sku: option.sku,
+      productName: option.productName, color: option.color || "", size: option.size || "",
+      qty: bulkQty && Number(bulkQty) > 0 ? bulkQty : "1",
+      unitCost: isAdmin ? String(Number(bulkUnitCost || option.unitCost || 0)) : "0",
+    }));
+    if (toAdd.length) setItems((prev) => [...toAdd, ...prev]);
+  }
+
   function addVisibleVariantsToDraft() {
     const existingIds = new Set(items.map((item) => item.variantId));
     const nextItems = variantOptions
@@ -1282,8 +1315,86 @@ export default function PurchaseReceiptsPageClient() {
     }
   }
 
+  async function handleDelete(receipt: PurchaseReceipt) {
+    if (!isAdmin) return;
+    const code = receipt.receiptCode;
+    if (window.prompt(`XÓA VĨNH VIỄN phiếu ${code}? Chỉ phiếu nháp/đã hủy, chưa thanh toán, chưa nhập kho được xóa.\nNhập chính xác mã phiếu để xác nhận:`) !== code) return;
+    try {
+      setDeletingId(receipt.id);
+      setError(null);
+      const result = await apiFetch(`/purchase-receipts/${encodeURIComponent(receipt.id)}`, { method: "DELETE" });
+      if (!result.ok) {
+        const body = await result.json().catch(() => ({}));
+        throw new Error(Array.isArray(body.message) ? body.message.join(", ") : body.message || "Không thể xóa phiếu");
+      }
+      setNotice(`Đã xóa phiếu ${code}.`);
+      await refreshReceiptsInPlace();
+    } catch (err) { setError(err instanceof Error ? err.message : "Không thể xóa phiếu"); }
+    finally { setDeletingId(null); }
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const receiptId = new URLSearchParams(window.location.search).get("receiptId") || "";
+    setFocusedReceiptId(receiptId);
+  }, []);
+
+  useEffect(() => {
+    if (loading || !rows.length || !focusedReceiptId) return;
+    const receiptId = focusedReceiptId;
+    if (!receiptId || !rows.some((row) => row.id === receiptId)) return;
+    setExpandedReceiptIds((prev) => prev.includes(receiptId) ? prev : [...prev, receiptId]);
+    const scroll = window.setTimeout(() => document.getElementById(`purchase-receipt-${receiptId}`)?.scrollIntoView({ block: "start", behavior: "smooth" }), 80);
+    return () => window.clearTimeout(scroll);
+  }, [loading, rows, focusedReceiptId]);
+
+  const displayReceipts = focusedReceiptId
+    ? rows.filter((receipt) => String(receipt.id) === focusedReceiptId)
+    : filteredRows;
+
+  // Product metadata is only for presentation. The receipt items remain the source of truth.
+  const productLookup = useMemo(() => {
+    const byId = new Map<string, any>();
+    const bySku = new Map<string, any>();
+    for (const product of products as any[]) {
+      const id = String(product?.id || "");
+      if (id) byId.set(id, product);
+      for (const variant of product?.variants || []) {
+        const sku = String(variant?.sku || "").trim().toUpperCase();
+        if (sku) bySku.set(sku, product);
+      }
+    }
+    return { byId, bySku };
+  }, [products]);
+
+  function getMainProducts(receipt: PurchaseReceipt) {
+    const groups = new Map<string, { sku: string; name: string; qty: number; image: string }>();
+    for (const item of getReceiptItems(receipt)) {
+      const sku = String(item.sku || "").trim();
+      const product = productLookup.byId.get(String((item as any).productId || "")) || productLookup.bySku.get(sku.toUpperCase());
+      const mainSku = String(product?.sku || product?.code || product?.productCode || sku.split("-")[0] || sku);
+      const key = String(product?.id || mainSku || item.productName || sku);
+      let group = groups.get(key);
+      if (!group) {
+        const candidate = product?.imageUrl || product?.thumbnailUrl || product?.thumbnail || product?.image || product?.featuredImage || product?.images?.[0] || product?.imageUrls?.[0] || product?.media?.[0];
+        const image = typeof candidate === "string" ? candidate : String(candidate?.url || candidate?.secure_url || candidate?.src || "");
+        group = { sku: mainSku, name: String(product?.name || item.productName || mainSku), qty: 0, image };
+        groups.set(key, group);
+      }
+      group.qty += Number(item.qty || 0);
+    }
+    return [...groups.values()];
+  }
+
   return (
     <div className="space-y-5 p-5">
+      {focusedReceiptId ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white p-4">
+          <div><p className="text-xs text-neutral-500">Chi tiết phiếu nhập</p><h2 className="text-xl font-bold">{rows.find((r) => r.id === focusedReceiptId)?.receiptCode || "Đang tải phiếu..."}</h2></div>
+          <a href="?" className="rounded-lg border border-neutral-300 px-3 py-2 text-sm font-semibold">← Danh sách phiếu nhập</a>
+        </div>
+      ) : null}
+      {!focusedReceiptId ? <>
       <div className="overflow-hidden rounded-[28px] bg-neutral-950 p-5 text-white shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -1484,6 +1595,8 @@ export default function PurchaseReceiptsPageClient() {
         ) : null}
       </Panel>
 
+      </> : null}
+
       {error ? (
         <Panel className="p-3">
           <p className="text-sm text-red-600">{error}</p>
@@ -1497,37 +1610,38 @@ export default function PurchaseReceiptsPageClient() {
       ) : null}
 
       <div className="space-y-2 overflow-x-auto">
-        {!loading && filteredRows.length > 0 ? (
-          <div className="flex min-w-[1660px] items-center gap-3 rounded-xl bg-neutral-100 px-3 py-2 text-[11px] font-semibold uppercase text-neutral-500">
-            <div className="grid min-w-0 flex-1 grid-cols-[116px_195px_120px_132px_92px_128px_125px_160px] gap-3">
-              <span>Phiếu nhập</span><span>Nhà cung cấp</span><span>Kho nhập</span><span>Ngày tạo</span>
+        {!loading && displayReceipts.length > 0 ? (
+          <div className="flex min-w-[1580px] items-center gap-3 rounded-xl bg-neutral-100 px-3 py-2 text-[11px] font-semibold uppercase text-neutral-500">
+            <div className="grid min-w-0 flex-1 grid-cols-[100px_125px_220px_95px_110px_80px_105px_105px_130px] gap-2">
+              <span>Phiếu nhập</span><span>Nhà cung cấp</span><span>SKU chính / Ảnh</span><span>Kho nhập</span><span>Ngày tạo</span>
               <span>SL / SKU</span><span>Tổng tiền</span><span>Công nợ</span><span>Trạng thái</span>
             </div>
-            <span className="w-[430px] text-right">Thao tác</span>
+            <span className="w-[400px] pr-3 text-center">Thao tác</span>
           </div>
         ) : null}
         {loading ? (
           <Panel className="p-4">
             <p className="text-sm text-neutral-500">Đang tải phiếu nhập...</p>
           </Panel>
-        ) : filteredRows.length === 0 ? (
+        ) : displayReceipts.length === 0 ? (
           <Panel className="p-4">
             <p className="text-sm text-neutral-500">Chưa có phiếu nhập nào.</p>
           </Panel>
         ) : (
-          filteredRows.map((receipt) => {
+          displayReceipts.map((receipt) => {
             const receiptItems = getReceiptItems(receipt);
             const receiptQty = receiptItems.reduce((sum, item) => sum + Number(item.qty || 0), 0);
             const receiptAmount = getReceiptAmount(receipt);
             const paidAmount = getPaidAmount(receipt);
             const paidEnough = isReceiptPaidEnough(receipt);
             const stockImported = isReceiptStockImported(receipt);
-            const expanded = expandedReceiptIds.includes(receipt.id);
+            const expanded = focusedReceiptId === receipt.id || expandedReceiptIds.includes(receipt.id);
+            const mainProducts = getMainProducts(receipt);
 
             return (
-              <Panel key={receipt.id}>
-                <div className="flex min-w-[1660px] items-center gap-3 px-3 py-2.5">
-                  <div className="grid min-w-0 flex-1 grid-cols-[116px_195px_120px_132px_92px_128px_125px_160px] items-center gap-3 text-xs">
+              <div key={receipt.id} id={`purchase-receipt-${receipt.id}`}><Panel>
+                <div className="flex min-w-[1580px] items-center gap-3 px-3 py-1.5">
+                  <div className="grid min-w-0 flex-1 grid-cols-[100px_125px_220px_95px_110px_80px_105px_105px_130px] items-center gap-2 text-xs">
                     <button
                       type="button"
                       onClick={() => openReceiptInNewTab(receipt)}
@@ -1538,6 +1652,22 @@ export default function PurchaseReceiptsPageClient() {
                     </button>
                     <div className="truncate font-medium text-neutral-800" title={receipt.supplier?.name || "—"}>
                       {receipt.supplier?.name || "—"}
+                    </div>
+                    <div className="flex min-w-0 items-center gap-1.5" title={mainProducts.map(product => `${product.sku} · ${product.name} · ${product.qty} SP`).join("; ")}>
+                      {mainProducts.slice(0, 2).map((product) => (
+                        <div key={product.sku + product.name} className="flex min-w-0 flex-1 items-center gap-1.5">
+                          {product.image ? (
+                            <img src={product.image} alt={product.name} loading="lazy" className="h-11 w-11 shrink-0 rounded-md border border-neutral-200 object-cover" onError={(event) => {event.currentTarget.style.display = "none";}} />
+                          ) : (
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-[9px] text-neutral-500">Ảnh</span>
+                          )}
+                          <div className="min-w-0">
+                            <div className="truncate text-[11px] font-semibold text-neutral-900">{product.sku}</div>
+                            <div className="truncate text-[10px] text-neutral-500">{product.qty} SP</div>
+                          </div>
+                        </div>
+                      ))}
+                      {mainProducts.length > 2 ? <span className="shrink-0 text-[10px] font-semibold text-neutral-500">+{mainProducts.length - 2}</span> : null}
                     </div>
                     <div className="truncate text-neutral-600" title={receipt.branch?.name || "—"}>
                       {receipt.branch?.name || "—"}
@@ -1559,22 +1689,22 @@ export default function PurchaseReceiptsPageClient() {
                       ) : null}
                     </div>
                   </div>
-                  <div className="flex w-[430px] shrink-0 flex-wrap items-center justify-end gap-1.5">
+                  <div className="flex w-[400px] shrink-0 flex-nowrap items-center justify-start gap-1.5 pr-3">
                     <a
-                      href={`/control/purchase-receipts/${receipt.id}`}
+                      href={`?receiptId=${encodeURIComponent(receipt.id)}`}
                       target="_blank"
                       rel="noreferrer"
                       className="whitespace-nowrap rounded-lg border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-neutral-800"
                     >
-                      Mở tab mới
+                      Mở
                     </a>
 
                     <button
                       type="button"
                       onClick={() => toggleReceiptExpanded(receipt.id)}
-                      className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-900 hover:bg-neutral-50"
+                      className="whitespace-nowrap rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-900 hover:bg-neutral-50"
                     >
-                      {expanded ? "Thu gọn nhanh" : "Xem nhanh"}
+                      {expanded ? "Thu gọn" : "Xem nhanh"}
                     </button>
 
                     {receipt.status === "DRAFT" &&
@@ -1584,9 +1714,9 @@ export default function PurchaseReceiptsPageClient() {
                           <button
                             type="button"
                             onClick={() => openEdit(receipt)}
-                            className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-900 hover:bg-neutral-50"
+                            className="whitespace-nowrap rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-900 hover:bg-neutral-50"
                           >
-                            Sửa phiếu
+                            Sửa
                           </button>
                         ) : null}
 
@@ -1595,10 +1725,10 @@ export default function PurchaseReceiptsPageClient() {
                             type="button"
                             onClick={() => void handleRequestPayment(receipt.id)}
                             disabled={importingId === receipt.id}
-                            className={`rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                            className={`whitespace-nowrap rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                               }`}
                           >
-                            {importingId === receipt.id ? "Đang xác nhận..." : "Xác nhận đủ hàng"}
+                            {importingId === receipt.id ? "Đang xác nhận..." : "Xác nhận"}
                           </button>
                         ) : null}
 
@@ -1607,7 +1737,7 @@ export default function PurchaseReceiptsPageClient() {
                             type="button"
                             onClick={() => void handleCancel(receipt.id)}
                             disabled={cancellingId === receipt.id}
-                            className={`rounded-lg border border-red-300 bg-red-50 px-2.5 py-1.5 text-[11px] font-medium text-red-700 ${cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                            className={`whitespace-nowrap rounded-lg border border-red-300 bg-red-50 px-2.5 py-1.5 text-[11px] font-medium text-red-700 ${cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                               }`}
                           >
                             {cancellingId === receipt.id ? "Đang hủy..." : "Hủy"}
@@ -1616,15 +1746,29 @@ export default function PurchaseReceiptsPageClient() {
                       </>
                     ) : null}
 
+                    {canCancelReceipt && receipt.status === "PAYMENT_REQUESTED" && !stockImported && getReceiptPayments(receipt).length === 0 ? (
+                      <button type="button" onClick={() => void handleCancel(receipt.id)} disabled={cancellingId === receipt.id}
+                        className="whitespace-nowrap rounded-lg border border-red-300 bg-red-50 px-2.5 py-1.5 text-[11px] font-medium text-red-700 disabled:opacity-50">
+                        {cancellingId === receipt.id ? "Đang hủy..." : "Hủy"}
+                      </button>
+                    ) : null}
+
+                    {isAdmin && ["DRAFT", "CANCELLED"].includes(receipt.status) && !stockImported && paidAmount === 0 ? (
+                      <button type="button" onClick={() => void handleDelete(receipt)} disabled={deletingId === receipt.id}
+                        className="whitespace-nowrap rounded-lg border border-red-300 px-2.5 py-1.5 text-[11px] font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">
+                        {deletingId === receipt.id ? "Đang xóa..." : "Xóa"}
+                      </button>
+                    ) : null}
+
                     {canPayReceipt &&
                       !paidEnough &&
                       !["DRAFT", "CANCELLED", "COMPLETED"].includes(receipt.status) ? (
                       <a
                         href={`/finance/supplier-payments?receiptId=${receipt.id}`}
                         target="_blank"
-                        className="rounded-lg border border-green-300 bg-green-50 px-2.5 py-1.5 text-[11px] font-medium text-green-700"
+                        className="whitespace-nowrap rounded-lg border border-green-300 bg-green-50 px-2.5 py-1.5 text-[11px] font-medium text-green-700"
                       >
-                        Mở phiếu thanh toán
+                        Thanh toán
                       </a>
                     ) : null}
 
@@ -1634,7 +1778,7 @@ export default function PurchaseReceiptsPageClient() {
                       <button
                         onClick={() => void handleImportStock(receipt.id)}
                         disabled={importingId === receipt.id}
-                        className={`rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                        className={`whitespace-nowrap rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                           }`}
                       >
                         {importingId === receipt.id ? "Đang nhập kho..." : "Nhập kho"}
@@ -1648,7 +1792,7 @@ export default function PurchaseReceiptsPageClient() {
                       <button
                         onClick={() => void handleComplete(receipt.id)}
                         disabled={completingId === receipt.id}
-                        className={`rounded-lg border border-green-300 bg-green-50 px-2.5 py-1.5 text-[11px] font-medium text-green-700 ${completingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                        className={`whitespace-nowrap rounded-lg border border-green-300 bg-green-50 px-2.5 py-1.5 text-[11px] font-medium text-green-700 ${completingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                           }`}
                       >
                         {completingId === receipt.id ? "Đang hoàn tất..." : "Hoàn tất"}
@@ -1657,6 +1801,10 @@ export default function PurchaseReceiptsPageClient() {
                   </div>
                 </div>
 
+                <div className="flex min-w-0 items-center gap-x-4 overflow-hidden border-t border-neutral-100 px-3 py-1 text-[10px] text-neutral-600">
+                  <span className="shrink-0">Người lập: <b className="text-neutral-800">{getCreatedByName(receipt)}</b></span>
+                  <span className="min-w-0 truncate" title={receipt.note || "Chưa có ghi chú"}>Ghi chú: {receipt.note || "Chưa có ghi chú"}</span>
+                </div>
                 {expanded ? (
                   <div className="overflow-auto">
                     <table className="min-w-full text-[13px]">
@@ -1692,7 +1840,7 @@ export default function PurchaseReceiptsPageClient() {
                   </div>
 
                 ) : null}
-              </Panel>
+              </Panel></div>
             );
           })
         )}
@@ -1888,7 +2036,22 @@ export default function PurchaseReceiptsPageClient() {
                 <div className="p-4 text-sm text-neutral-500">Không có variant phù hợp.</div>
               ) : (
                 <div className="divide-y divide-neutral-200">
-                  {variantOptions.map((item) => {
+                  {groupedVariantOptions.map((group) => {
+                    const expanded = expandedProductGroups.includes(group.id);
+                    const remaining = group.options.filter((option) => !items.some((line) => line.variantId === option.variantId)).length;
+                    return <div key={group.id}>
+                      <div className="flex items-center gap-2 bg-neutral-50 px-3 py-2">
+                        <button type="button" className="min-w-0 flex-1 text-left text-sm font-semibold text-neutral-900"
+                          onClick={() => setExpandedProductGroups((prev) => prev.includes(group.id) ? prev.filter((id) => id !== group.id) : [...prev, group.id])}>
+                          {expanded ? "▾" : "▸"} {group.sku} · {group.name} <span className="text-xs font-normal text-neutral-500">({group.options.length} SKU)</span>
+                        </button>
+                        <button type="button" disabled={!remaining} onClick={() => addProductGroupToDraft(group)}
+                          className="rounded-lg border border-neutral-300 bg-white px-2 py-1 text-xs font-medium text-neutral-800 disabled:opacity-40">
+                          Thêm cả mã chính ({remaining})
+                        </button>
+                      </div>
+                      {expanded ? group.options.map((item) => {
+
                     const added = items.some((line) => line.variantId === item.variantId);
 
                     return (
@@ -1919,6 +2082,8 @@ export default function PurchaseReceiptsPageClient() {
                         </div>
                       </button>
                     );
+                      }) : null}
+                    </div>;
                   })}
                 </div>
               )}
