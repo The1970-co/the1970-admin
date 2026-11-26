@@ -1611,9 +1611,10 @@ function returnDotState(order: AdminOrder, returnOrderCodeSet: Set<string>): Dot
   return "empty";
 }
 
-function ReturnOrderDot({ state, title }: { state: DotState; title: string }) {
+function ReturnOrderDot({ state, title, linked = false }: { state: DotState; title: string; linked?: boolean }) {
   return (
-    <span title={title} aria-label={title} className="relative inline-flex h-4 w-4 shrink-0 overflow-hidden rounded-full border-2 border-neutral-800 bg-white">
+    <span title={title} aria-label={title} className={`relative inline-flex h-4 w-4 shrink-0 overflow-hidden rounded-full border-2 ${linked && state === "empty" ? "border-blue-600 bg-blue-50" : "border-neutral-800 bg-white"}`}>
+      {linked && state === "empty" ? <span className="absolute inset-[3px] rounded-full bg-blue-600" /> : null}
       {state === "filled" ? <span className="absolute inset-0 bg-neutral-900" /> : null}
       {state === "partial" ? <span className="absolute inset-y-0 left-0 w-1/2 bg-neutral-900" /> : null}
     </span>
@@ -1645,6 +1646,46 @@ type ExchangeHistoryRow = {
   items?: Array<{ type?: string; name?: string; sku?: string | null; qty?: number }>;
 };
 
+type ExchangeOriginLink = {
+  id: string;
+  code: string;
+  originalOrderId: string;
+  originalOrderCode: string;
+  status?: string | null;
+  createdAt?: string | null;
+  items: ExchangeHistoryRow["items"];
+};
+
+function exchangeOriginHint(order: AdminOrder): string {
+  const row = order as any;
+  const explicit = String(row.exchangeContext?.returnCode || row.exchangeOrigin?.code || "").trim();
+  if (/^RTN-[\w-]+$/i.test(explicit)) return explicit;
+  const text = [row.note, row.shippingNote, row.shipment?.metadata?.note].filter(Boolean).join(" ");
+  return (text.match(/RTN-\d{8,}/i) || [""])[0];
+}
+
+function originFromReturnRow(row: any, exchangeOrder: AdminOrder): ExchangeOriginLink | null {
+  if (!row) return null;
+  const exchangeId = String(row.exchangeOrderId || "").trim();
+  const exchangeCode = String(row.exchangeOrderCode || "").trim();
+  if (exchangeId !== String(exchangeOrder.id || "") &&
+      exchangeCode !== String(exchangeOrder.orderCode || "")) return null;
+  const originalCode = String(row.originalOrderCode || row.originalOrder?.orderCode || "").trim();
+  const originalId = String(row.originalOrderId || row.originalOrder?.id || "").trim();
+  if (!originalCode && !originalId) return null;
+  return {
+    id: String(row.id || ""), code: String(row.code || ""),
+    originalOrderId: originalId,
+    originalOrderCode: originalCode || originalId,
+    status: row.status, createdAt: row.createdAt,
+    items: (Array.isArray(row.items) ? row.items : []).map((item: any) => ({
+      type: String(item.type || item.itemType || "RETURN"),
+      name: String(item.name || item.productName || item.sku || "Sản phẩm"),
+      sku: item.sku || null, qty: Number(item.qty || 0),
+    })),
+  };
+}
+
 function exchangeHistoryStatus(row: ExchangeHistoryRow) {
   const ship = String(row.exchangeShippingStatus || "").toUpperCase();
   const fulfillment = String(row.exchangeFulfillmentStatus || "").toUpperCase();
@@ -1660,14 +1701,34 @@ function exchangeHistoryStatus(row: ExchangeHistoryRow) {
 
 function ExchangeHistoryTimeline({ order, compact = false }: { order: AdminOrder; compact?: boolean }) {
   const tickets = (((order as any).returnTicketSummaries || []) as ExchangeHistoryRow[]);
-  if (!tickets.length) return null;
+  const origin = ((order as any).exchangeOriginLink || null) as ExchangeOriginLink | null;
+  if (!tickets.length && !origin) return null;
   return (
     <div className={`min-w-0 text-left ${compact ? "max-w-[480px] text-[11px]" : "text-xs"}`}>
       <div className="flex items-center gap-2 font-semibold text-neutral-900">
         <span className="inline-flex h-2.5 w-2.5 rounded-full bg-neutral-900" />
-        <span>Đơn gốc {order.orderCode}</span>
+        <span>{origin ? "Đơn giao đổi " : "Đơn gốc "}{order.orderCode}</span>
       </div>
       <div className="ml-[5px] border-l border-neutral-300 pl-3">
+        {origin ? (
+          <div className="relative border-b border-neutral-100 py-2">
+            <span className="absolute -left-[17px] top-[13px] h-2 w-2 rounded-full border border-blue-500 bg-blue-100" />
+            <div className="font-semibold text-neutral-800">Đơn đổi từ đơn gốc: {" "}
+              <Link target="_blank" rel="noopener noreferrer" href={`/orders/${encodeURIComponent(origin.originalOrderId || origin.originalOrderCode)}`} onClick={e => e.stopPropagation()} className="text-blue-700 hover:underline">{origin.originalOrderCode}</Link>
+            </div>
+            <div className="text-neutral-700">Phiếu đổi/trả: {" "}
+              <Link target="_blank" rel="noopener noreferrer" href={`/returns?returnId=${encodeURIComponent(origin.id || origin.code)}`} onClick={e => e.stopPropagation()} className="font-semibold text-indigo-700 hover:underline">{origin.code}</Link>
+              {origin.status ? ` · RTN ${String(origin.status).toUpperCase() === "COMPLETED" ? "Hoàn tất" : "Đang xử lý"}` : ""}
+            </div>
+            {(origin.items || []).filter(i => String(i.type || "RETURN").toUpperCase() === "EXCHANGE").length ? (
+              <div className="mt-0.5 text-emerald-800">Giao: {(origin.items || []).filter(i => String(i.type || "").toUpperCase() === "EXCHANGE").map(i => `${i.name || i.sku} ×${i.qty || 0}`).join(", ")}</div>
+            ) : null}
+            {(origin.items || []).filter(i => String(i.type || "RETURN").toUpperCase() !== "EXCHANGE").length ? (
+              <div className="mt-0.5 text-rose-800">Thu hồi: {(origin.items || []).filter(i => String(i.type || "RETURN").toUpperCase() !== "EXCHANGE").map(i => `${i.name || i.sku} ×${i.qty || 0}`).join(", ")}</div>
+            ) : null}
+            {origin.createdAt ? <div className="mt-0.5 text-[10px] text-neutral-400">{origin.createdAt}</div> : null}
+          </div>
+        ) : null}
         {tickets.map((ticket, index) => {
           const returned = (ticket.items || []).filter(i => String(i.type || "RETURN").toUpperCase() !== "EXCHANGE");
           const delivered = (ticket.items || []).filter(i => String(i.type || "").toUpperCase() === "EXCHANGE");
@@ -1679,11 +1740,11 @@ function ExchangeHistoryTimeline({ order, compact = false }: { order: AdminOrder
                 {ticket.exchangeOrderCode ? (
                   <>
                     <span className="font-semibold text-neutral-800">Đơn đổi:</span>
-                    <Link href={`/orders/${encodeURIComponent(ticket.exchangeOrderId || ticket.exchangeOrderCode)}`} onClick={e => e.stopPropagation()} className="font-semibold text-blue-700 hover:underline">{ticket.exchangeOrderCode}</Link>
+                    <Link target="_blank" rel="noopener noreferrer" href={`/orders/${encodeURIComponent(ticket.exchangeOrderId || ticket.exchangeOrderCode)}`} onClick={e => e.stopPropagation()} className="font-semibold text-blue-700 hover:underline">{ticket.exchangeOrderCode}</Link>
                   </>
                 ) : <span className="font-semibold text-neutral-800">Phiếu đổi/trả (chưa tạo đơn mới)</span>}
                 <span className="text-neutral-400">·</span>
-                <Link href={`/returns?returnId=${encodeURIComponent(ticket.id || "")}`} onClick={e => e.stopPropagation()} className="font-semibold text-indigo-700 hover:underline">{ticket.code || "RTN"}</Link>
+                <Link target="_blank" rel="noopener noreferrer" href={`/returns?returnId=${encodeURIComponent(ticket.id || "")}`} onClick={e => e.stopPropagation()} className="font-semibold text-indigo-700 hover:underline">{ticket.code || "RTN"}</Link>
               </div>
               <div className="mt-0.5 font-medium text-neutral-700">{exchangeHistoryStatus(ticket)} · RTN {String(ticket.status || "").toUpperCase() === "COMPLETED" ? "Hoàn tất" : "Đang xử lý"}</div>
               {delivered.length ? <div className="mt-0.5 text-emerald-800">Giao: {describe(delivered)}</div> : null}
@@ -4713,6 +4774,7 @@ export default function OrdersPageClient() {
 
   const [globalFilterOptions, setGlobalFilterOptions] = useState<{ shippingPartners: string[]; salesChannels: string[]; paymentSources?: Array<{ id: string; name: string; code?: string | null; type?: string | null; branchId?: string | null }> }>({ shippingPartners: [], salesChannels: [], paymentSources: [] });
   const [orders, setOrders] = useState<AdminOrder[]>([]);
+  const [exchangeOriginByOrder, setExchangeOriginByOrder] = useState<Record<string, ExchangeOriginLink>>({});
   const [loading, setLoading] = useState(true);
   const [printVersion, setPrintVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -5153,7 +5215,11 @@ export default function OrdersPageClient() {
       setQuickViewLoading(true);
       setActionMessage("");
       const fullOrder = await fetchFullOrderDetail(order);
-      setQuickViewOrder(fullOrder);
+      setQuickViewOrder({
+        ...fullOrder,
+        returnTicketSummaries: (order as any).returnTicketSummaries || (fullOrder as any).returnTicketSummaries,
+        exchangeOriginLink: (order as any).exchangeOriginLink || (fullOrder as any).exchangeOriginLink,
+      } as AdminOrder);
     } catch (err) {
       setActionMessage(
         err instanceof Error
@@ -5700,6 +5766,9 @@ export default function OrdersPageClient() {
       const meta = parseStructuredNote(order.note);
       return {
         ...order,
+        ...(exchangeOriginByOrder[String(order.id)]
+          ? { exchangeOriginLink: exchangeOriginByOrder[String(order.id)] }
+          : {}),
         _meta: meta,
         _createdByName: getCreatedByName(order),
         _assignedStaffName: getAssignedStaffDisplayName(order),
@@ -5911,11 +5980,55 @@ export default function OrdersPageClient() {
     appliedQuickStatus === "ALL" ? "all" : cardDateFilter,
   ]);
 
+  // Quan hệ ngược của đơn đổi. Không phụ thuộc việc đơn gốc có nằm trong trang hiện tại.
+  // Chỉ hỏi phiếu RTN được ghi cụ thể trong đơn đổi, tránh gọi API cho toàn bộ đơn.
+  useEffect(() => {
+    let cancelled = false;
+    const candidates = orders.filter((row) => exchangeOriginHint(row) && !exchangeOriginByOrder[String(row.id)]);
+    if (!candidates.length) return;
+    void (async () => {
+      const additions: Record<string, ExchangeOriginLink> = {};
+      // Giới hạn đồng thời nhằm tránh dồn tải API khi đang xem 50/100 đơn.
+      for (let i = 0; i < candidates.length && !cancelled; i += 5) {
+        const chunk = candidates.slice(i, i + 5);
+        await Promise.all(chunk.map(async (row) => {
+          const code = exchangeOriginHint(row);
+          if (!code) return;
+          try {
+            const res = await apiFetch(`/returns/${encodeURIComponent(code)}`, { cache: "no-store" });
+            if (!res.ok) return;
+            const json = await res.json();
+            const link = originFromReturnRow(json?.data || json, row);
+            if (link) additions[String(row.id)] = link;
+          } catch { /* Không làm hỏng danh sách khi phiếu RTN không đọc được. */ }
+        }));
+      }
+      if (!cancelled && Object.keys(additions).length) {
+        setExchangeOriginByOrder(prev => ({ ...prev, ...additions }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [orders]);
+
   const normalizedOrders = useMemo<NormalizedOrder[]>(() => {
+    const localOrigins = new Map<string, ExchangeOriginLink>();
+    for (const source of orders) {
+      for (const ticket of (((source as any).returnTicketSummaries || []) as any[])) {
+        const target = orders.find(row => String(row.id) === String(ticket.exchangeOrderId || "") ||
+          String(row.orderCode) === String(ticket.exchangeOrderCode || ""));
+        if (!target) continue;
+        const mapped = originFromReturnRow({ ...ticket, originalOrderId: source.id,
+          originalOrderCode: source.orderCode }, target);
+        if (mapped) localOrigins.set(String(target.id), mapped);
+      }
+    }
     return orders.map((order) => {
       const meta = parseStructuredNote(order.note);
       return {
         ...order,
+        ...(exchangeOriginByOrder[String(order.id)] || localOrigins.get(String(order.id))
+          ? { exchangeOriginLink: exchangeOriginByOrder[String(order.id)] || localOrigins.get(String(order.id)) }
+          : {}),
         _meta: meta,
         _createdByName: getCreatedByName(order),
         _assignedStaffName: getAssignedStaffDisplayName(order),
@@ -5931,7 +6044,7 @@ export default function OrdersPageClient() {
         _createdAtDate: parseOrderDate(order.createdAt),
       };
     });
-  }, [orders]);
+  }, [orders, exchangeOriginByOrder]);
 
   const partialReturnOrderCodeSet = useMemo(() => {
     return new Set(
@@ -7844,10 +7957,11 @@ getPaidRevenueAmount(o)
               <div className="mt-0.5 shrink-0">
                 <ReturnOrderDot
                   state={returnDotState(order, partialReturnOrderCodeSet)}
-                  title={returnDotState(order, partialReturnOrderCodeSet) === "filled" ? "Đã trả toàn bộ sản phẩm" : returnDotState(order, partialReturnOrderCodeSet) === "partial" ? "Đã trả một phần sản phẩm" : "Chưa có hàng trả hoàn tất"}
+                  linked={Boolean((order as any).exchangeOriginLink)}
+                  title={returnDotState(order, partialReturnOrderCodeSet) === "filled" ? "Đã trả toàn bộ sản phẩm" : returnDotState(order, partialReturnOrderCodeSet) === "partial" ? "Đã trả một phần sản phẩm" : (order as any).exchangeOriginLink ? "Đơn giao đổi có liên kết với đơn gốc (không phải trạng thái đã trả hàng)" : "Chưa có hàng trả hoàn tất"}
                 />
               </div>
-              {((order as any).returnTicketSummaries || []).length ? (
+              {((order as any).returnTicketSummaries || []).length || (order as any).exchangeOriginLink ? (
                 <ExchangeHistoryTimeline order={order} compact />
               ) : returnBadgeText(order) ? <span className="text-xs text-neutral-600">{returnBadgeText(order)}</span> : null}
             </div>
@@ -10325,7 +10439,7 @@ getPaidRevenueAmount(o)
                     </Panel>
                   </div>
 
-                  {((quickViewOrder as any).returnTicketSummaries || []).length ? (
+                  {((quickViewOrder as any).returnTicketSummaries || []).length || (quickViewOrder as any).exchangeOriginLink ? (
                     <Panel className="mt-4 p-4">
                       <h4 className="mb-3 font-semibold text-neutral-950">Dòng thời gian đổi / trả hàng</h4>
                       <ExchangeHistoryTimeline order={quickViewOrder} />
