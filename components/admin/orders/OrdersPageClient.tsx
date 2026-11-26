@@ -1975,6 +1975,9 @@ function orderStatusLabel(status?: string) {
       return "Hoàn thành";
     case "CANCELLED":
       return "Đã hủy";
+    case "RETURNING_ORDER": return "Đang hoàn hàng";
+    case "RETURNED_ORDER": return "Đã hoàn hàng";
+    case "RETURN_RECEIVED_ORDER": return "Đã nhận hàng hoàn";
     default:
       return status || "—";
   }
@@ -2332,7 +2335,22 @@ function isShipmentActiveForOrderStatus(order: AdminOrder) {
   );
 }
 
+// Trạng thái hoàn hàng là trạng thái vận hành hiển thị, không ghi đè Order.status trong DB.
+function orderReturnDisplayStatus(order: AdminOrder): "RETURNING_ORDER" | "RETURNED_ORDER" | "RETURN_RECEIVED_ORDER" | "" {
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
+  const received = String(shipment.returnReceiveStatus || shipment.metadata?.returnReceiveStatus || shipment.metadata?.return_receive_status || anyOrder.returnReceiveStatus || "").toUpperCase();
+  if (["RECEIVED", "RECEIVED_WITH_ISSUE"].includes(received)) return "RETURN_RECEIVED_ORDER";
+  const raw = [shipment.shippingStatus, shipment.partnerStatus, anyOrder.shippingStatus, anyOrder.deliveryStatus]
+    .map((v) => normalizeShipmentTextForUi(String(v || ""))).join(" ");
+  if (/RETURNED|RETURN TO CLIENT|DA HOAN|HOAN VE SHOP|HANG HOAN VE/.test(raw) || received === "WAITING_CONFIRM" || received === "CONFIRMED") return "RETURNED_ORDER";
+  if (/RETURNING|RETURN TRANSPORTING|RETURN SORTING|WAITING TO RETURN|DANG HOAN|CHUYEN HOAN|HOAN HANG/.test(raw)) return "RETURNING_ORDER";
+  return "";
+}
+
 function getDisplayOrderStatus(order: AdminOrder): OrderStatus {
+  const returnStatus = orderReturnDisplayStatus(order);
+  if (returnStatus) return returnStatus as OrderStatus;
   const rawStatus = String(order.status || "") as OrderStatus;
   const anyOrder: any = order || {};
   const shipment: any = anyOrder.shipment || {};
@@ -2370,6 +2388,9 @@ function getDisplayOrderStatus(order: AdminOrder): OrderStatus {
 
 function orderStatusTone(status?: string) {
   switch (status) {
+    case "RETURNING_ORDER": return "bg-amber-50 text-amber-700 border-amber-200";
+    case "RETURNED_ORDER": return "bg-orange-50 text-orange-700 border-orange-200";
+    case "RETURN_RECEIVED_ORDER": return "bg-emerald-50 text-emerald-700 border-emerald-200";
     case "NEW":
       return "bg-amber-50 text-amber-700 border-amber-200";
     case "APPROVED":
@@ -2423,7 +2444,7 @@ function fulfillmentStatusTone(status?: string | null) {
   }
 }
 
-const ORDER_STATUS_FILTER_OPTIONS: Array<{ value: "ALL" | OrderStatus; label: string }> = [
+const ORDER_STATUS_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "ALL", label: "Tất cả trạng thái đơn" },
   { value: "NEW", label: "Đơn nháp" },
   { value: "APPROVED", label: "Đã duyệt" },
@@ -2431,6 +2452,9 @@ const ORDER_STATUS_FILTER_OPTIONS: Array<{ value: "ALL" | OrderStatus; label: st
   { value: "SHIPPED", label: "Đã xuất kho / đang giao" },
   { value: "COMPLETED", label: "Hoàn thành / thành công" },
   { value: "CANCELLED", label: "Đã hủy" },
+  { value: "RETURNING_ORDER", label: "Đang hoàn hàng" },
+  { value: "RETURNED_ORDER", label: "Đã hoàn hàng" },
+  { value: "RETURN_RECEIVED_ORDER", label: "Đã nhận hàng hoàn" },
 ];
 
 const DELIVERY_STATUS_FILTER_OPTIONS = [
@@ -5572,6 +5596,7 @@ export default function OrdersPageClient() {
 
         const selectedBranchIds = selectedMultiFilterValues(appliedBranchFilter);
         const selectedOrderStatuses = selectedMultiFilterValues(appliedOrderFilter);
+        const orderStatusesForApi = selectedOrderStatuses;
         const selectedPaymentStatuses = selectedMultiFilterValues(appliedPaymentFilter);
         const selectedCreatedByNames = selectedMultiFilterValues(appliedCreatedByFilter);
 
@@ -5602,7 +5627,7 @@ export default function OrdersPageClient() {
 
         if (exchangeReturnStatus !== "ALL") params.set("exchangeReturnStatus", exchangeReturnStatus);
         const advancedFilters: Array<[string, string[]]> = [
-          ["branchIds", selectedBranchIds], ["orderStatuses", selectedOrderStatuses],
+          ["branchIds", selectedBranchIds], ["orderStatuses", orderStatusesForApi],
           ["paymentStatuses", selectedPaymentStatuses],
           ["paymentSourceIds", selectedMultiFilterValues(appliedPaymentSourceFilter)],
           ["fulfillmentStatuses", selectedMultiFilterValues(appliedFulfillmentFilter)],
@@ -7474,6 +7499,7 @@ export default function OrdersPageClient() {
       currentTo: appliedDateTo,
     });
     const selectedOrderStatuses = selectedMultiFilterValues(appliedOrderFilter);
+    const orderStatusesForApi = selectedOrderStatuses;
     const selectedPaymentStatuses = selectedMultiFilterValues(appliedPaymentFilter);
     const selectedCodReconciliationStatuses = selectedMultiFilterValues(appliedCodReconciliationFilter);
     const selectedCreatedByNames = selectedMultiFilterValues(appliedCreatedByFilter);
@@ -7508,7 +7534,7 @@ export default function OrdersPageClient() {
         if (appliedQuickStatus !== "ALL") params.set("quickStatus", appliedQuickStatus);
         if (exchangeReturnStatus !== "ALL") params.set("exchangeReturnStatus", exchangeReturnStatus);
         const excelAdvancedFilters: Array<[string, string[]]> = [
-          ["orderStatuses", selectedOrderStatuses], ["paymentStatuses", selectedPaymentStatuses],
+          ["orderStatuses", orderStatusesForApi], ["paymentStatuses", selectedPaymentStatuses],
           ["paymentSourceIds", selectedMultiFilterValues(appliedPaymentSourceFilter)],
           ["fulfillmentStatuses", selectedMultiFilterValues(appliedFulfillmentFilter)],
           ["deliveryStatuses", selectedMultiFilterValues(appliedDeliveryStatusFilter)],
@@ -10444,8 +10470,8 @@ getPaidRevenueAmount(o)
                       <p className="text-xs text-neutral-500">Trạng thái đơn</p>
                       <div className="mt-2">
                         <StatusBadge
-                          label={orderStatusLabel(quickViewOrder.status)}
-                          tone={orderStatusTone(quickViewOrder.status)}
+                          label={orderStatusLabel(getDisplayOrderStatus(quickViewOrder))}
+                          tone={orderStatusTone(getDisplayOrderStatus(quickViewOrder))}
                         />
                       </div>
                     </Panel>

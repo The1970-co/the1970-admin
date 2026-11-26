@@ -708,6 +708,30 @@ function paymentStatusText(status?: string | null) {
   }
 }
 
+function orderReturnDisplayStatus(order?: OrderDetail | null): "RETURNING" | "RETURNED" | "RECEIVED" | "" {
+  if (!order) return "";
+  const shipment = order.shipment;
+  const receive = getReturnReceiveStatus(shipment);
+  if (receive === "RECEIVED" || receive === "RECEIVED_WITH_ISSUE") return "RECEIVED";
+  const status = String([shipment?.shippingStatus, shipment?.partnerStatus].filter(Boolean).join(" ")).toUpperCase();
+  if (receive === "WAITING_CONFIRM" || /RETURNED|DA_HOAN|DA HOAN|ĐÃ HOÀN/.test(status)) return "RETURNED";
+  if (receive === "RETURNING" || /RETURNING|RETURN_TRANSPORTING|RETURN_SORTING|WAITING_TO_RETURN|RETURN/.test(status)) return "RETURNING";
+  return "";
+}
+function displayOrderStatusText(order?: OrderDetail | null) {
+  const returned = orderReturnDisplayStatus(order);
+  if (returned === "RECEIVED") return "Đã nhận hàng hoàn";
+  if (returned === "RETURNED") return "Đã hoàn hàng";
+  if (returned === "RETURNING") return "Đang hoàn hàng";
+  return orderStatusText(order?.status);
+}
+function canCancelBeforeStockOut(order?: OrderDetail | null) {
+  if (!order) return false;
+  const status = String(order.status || "").toUpperCase();
+  const hasTracking = Boolean(String(order.shipment?.trackingCode || "").trim());
+  return ["NEW", "APPROVED", "PACKING"].includes(status) && !hasTracking && !order.shipment?.id;
+}
+
 function orderStatusText(status?: string | null) {
   switch (status) {
     case "NEW":
@@ -929,11 +953,13 @@ function ActionButton({
   tone = "default",
   disabled = false,
   onClick,
+  title,
 }: {
   children: ReactNode;
   tone?: "default" | "dark" | "danger";
   disabled?: boolean;
   onClick?: () => void | Promise<void>;
+  title?: string;
 }) {
   const styles = "border-neutral-900 bg-neutral-950 text-white hover:bg-neutral-800";
 
@@ -941,6 +967,7 @@ function ActionButton({
     <button
       type="button"
       disabled={disabled}
+      title={title}
       onClick={() => void onClick?.()}
       className={`inline-flex items-center justify-center rounded-md border px-3 py-2 text-xs font-medium transition ${styles} ${disabled ? "cursor-not-allowed opacity-45" : ""
         }`}
@@ -1351,7 +1378,8 @@ function stageIndex(status?: string | null) {
 }
 
 function Timeline({ order }: { order?: OrderDetail | null }) {
-  const current = stageIndex(order?.status);
+  const returnStage = orderReturnDisplayStatus(order);
+  const current = returnStage || (order?.status === "SHIPPED" && order?.shipment?.trackingCode) ? 5 : stageIndex(order?.status);
   const createdTime = formatDateTime(order?.createdAt) || "—";
   const updatedTime = formatDateTime(order?.updatedAt) || createdTime;
   const steps = [
@@ -1359,12 +1387,12 @@ function Timeline({ order }: { order?: OrderDetail | null }) {
     { key: 2, label: "Duyệt" },
     { key: 3, label: "Đóng gói" },
     { key: 4, label: "Xuất kho" },
-    { key: 5, label: "Hoàn thành" },
+    { key: 5, label: returnStage === "RECEIVED" ? "Đã nhận hàng hoàn" : returnStage === "RETURNED" ? "Đã hoàn hàng" : returnStage === "RETURNING" ? "Đang hoàn hàng" : order?.status === "SHIPPED" ? "Đang giao" : "Hoàn thành" },
   ];
 
   const timeForStep = (key: number) => {
     if (key === 1) return createdTime;
-    if (current >= key && key === current) return updatedTime;
+    if (current >= key && key === current) return returnStage === "RECEIVED" ? formatDateTime(order?.shipment?.returnReceivedAt) || updatedTime : returnStage ? "Theo trạng thái HVC" : updatedTime;
     if (current > key) return "Đã qua";
     return "—";
   };
@@ -1561,6 +1589,7 @@ type MobileOrderDetailViewProps = {
   partialDelivery: boolean;
   saving: boolean;
   canEdit: boolean;
+  canCancelOrderPermission: boolean;
   shipmentEditable: boolean;
   codEditable: boolean;
   redeliveryAvailable: boolean;
@@ -1624,6 +1653,7 @@ function MobileOrderDetailView({
   partialDelivery,
   saving,
   canEdit,
+  canCancelOrderPermission,
   shipmentEditable,
   codEditable,
   redeliveryAvailable,
@@ -1668,7 +1698,7 @@ function MobileOrderDetailView({
 
           <div className="mt-3 flex flex-wrap gap-2">
             <Badge tone={toneForOrderStatus(viewOrder.status)}>
-              {orderStatusText(viewOrder.status)}
+              {displayOrderStatusText(viewOrder)}
             </Badge>
             <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
               {paymentStatusText(viewOrder.paymentStatus)}
@@ -1726,10 +1756,11 @@ function MobileOrderDetailView({
             <button
               type="button"
               onClick={onInternalCancel}
-              disabled={saving || !canEdit}
+              disabled={saving || !canCancelOrderPermission}
+              title={canCancelBeforeStockOut(viewOrder) ? "Hủy đơn chưa xuất kho" : "Chỉ hủy khi chưa xuất kho hoặc ở trạng thái nháp"}
               className="rounded-2xl border border-red-200 bg-red-50 px-3 py-3 text-[12px] font-semibold text-red-700 shadow-sm disabled:opacity-50"
             >
-              Huỷ nội bộ
+              Huỷ đơn chưa xuất kho
             </button>
           )}
           {codEditable ? (
@@ -3797,10 +3828,14 @@ export default function OrderDetailPageClient({
 
   const handleInternalCancelOrder = async () => {
     if (!order) return;
+    if (!canCancelBeforeStockOut(order)) {
+      setMessage("Chỉ hủy đơn chưa xuất kho hoặc ở trạng thái nháp; đơn đã xuất kho / gửi hãng vận chuyển không thể hủy nội bộ.");
+      return;
+    }
     const ok = await askConfirm({
-      title: `Huỷ nội bộ đơn ${order.orderCode}?`,
-      description: "Nút này chỉ đổi trạng thái trong hệ thống, không gửi lệnh huỷ sang hãng vận chuyển.",
-      confirmText: "Huỷ nội bộ",
+      title: `Huỷ đơn chưa xuất kho ${order.orderCode}?`,
+      description: "Chỉ hủy đơn chưa xuất kho và chưa tạo vận đơn. Không gửi lệnh hủy sang hãng vận chuyển.",
+      confirmText: "Hủy đơn chưa xuất kho",
       cancelText: "Không huỷ",
       tone: "danger",
     });
@@ -4192,6 +4227,7 @@ export default function OrderDetailPageClient({
         partialDelivery={partialDelivery}
         saving={saving}
         canEdit={canEdit}
+        canCancelOrderPermission={canCancelOrderPermission}
         shipmentEditable={shipmentEditable}
         codEditable={codEditable}
         redeliveryAvailable={redeliveryAvailable}
@@ -4228,7 +4264,7 @@ export default function OrderDetailPageClient({
                 {viewOrder.orderCode}
               </h1>
               <Badge tone={toneForOrderStatus(viewOrder.status)}>
-                {orderStatusText(viewOrder.status)}
+                {displayOrderStatusText(viewOrder)}
               </Badge>
               <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
                 {paymentStatusText(viewOrder.paymentStatus)}
@@ -4251,12 +4287,12 @@ export default function OrderDetailPageClient({
                 disabled={
                   saving ||
                   !canCancelOrderPermission ||
-                  viewOrder.status === "CANCELLED" ||
-                  viewOrder.status === "COMPLETED"
+                  viewOrder.status === "CANCELLED"
                 }
                 onClick={handleInternalCancelOrder}
+                title={canCancelBeforeStockOut(viewOrder) ? "Hủy đơn chưa xuất kho" : "Chỉ hủy khi chưa xuất kho hoặc ở trạng thái nháp"}
               >
-                Huỷ nội bộ
+                Huỷ đơn chưa xuất kho
               </ActionButton>
               {viewOrder.shipment?.trackingCode && openTrackingUrl ? (
                 <a
@@ -5438,7 +5474,7 @@ export default function OrderDetailPageClient({
                     />
                     <DataRow
                       label="Trạng thái"
-                      value={orderStatusText(viewOrder.status)}
+                      value={displayOrderStatusText(viewOrder)}
                     />
                     <DataRow
                       label="Thanh toán"
@@ -5477,7 +5513,7 @@ export default function OrderDetailPageClient({
                     />
                     <DataRow
                       label="Trạng thái"
-                      value={orderStatusText(viewOrder.status)}
+                      value={displayOrderStatusText(viewOrder)}
                     />
                     <DataRow
                       label="Thanh toán"
