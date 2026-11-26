@@ -1503,7 +1503,8 @@ function CodReconciliationDot({ order }: { order: AdminOrder }) {
     const hasReconciledAmount = rawReconciledAmount !== null && rawReconciledAmount !== undefined;
     const reconciledAmount = Number(rawReconciledAmount ?? 0);
     const expectedAmount = getShopActualReceived(order);
-    const mismatch = hasReconciledAmount && Math.abs(reconciledAmount - expectedAmount) > 1;
+    // COD 0đ là đối soát thu hộ 0đ, không so với tổng tiền khách đã CK trước.
+    const mismatch = hasReconciledAmount && reconciledAmount > 0 && Math.abs(reconciledAmount - expectedAmount) > 1;
 
     return (
       <span
@@ -1512,7 +1513,7 @@ function CodReconciliationDot({ order }: { order: AdminOrder }) {
         aria-label={label}
       >
         <span>✓</span>
-        <span>{mismatch ? `⚠ ${currency(expectedAmount)}` : hasReconciledAmount ? currency(reconciledAmount) : "Đã đối soát"}</span>
+        <span>{mismatch ? `⚠ ${currency(expectedAmount)}` : hasReconciledAmount && reconciledAmount > 0 ? currency(reconciledAmount) : "Đã đối soát"}</span>
       </span>
     );
   }
@@ -5016,6 +5017,7 @@ export default function OrdersPageClient() {
   // Quyền xem đơn đã được chặn bằng orders.view / orders.view_own ở API và UI; không tách ẩn cột tiền theo role nữa.
   const canSeeMoney = true;
   const canManageFilterPresets = isOwnerOrAdminUser(currentUser);
+  const canAdminReconcile = isOwnerOrAdminUser(currentUser);
   const canDeleteOrder = hasOrderPermission(currentUser, "orders.delete");
 
   const userStorageSuffix = useMemo(() => {
@@ -6859,6 +6861,7 @@ export default function OrdersPageClient() {
   };
 
   const toggleCheckAllVisible = () => {
+    if (!canAdminReconcile) return;
     if (allChecked) {
       setCheckedIds((prev) => prev.filter((id) => !allVisibleIds.includes(id)));
       return;
@@ -6868,6 +6871,7 @@ export default function OrdersPageClient() {
   };
 
   const reconcileCheckedOrders = async () => {
+    if (!canAdminReconcile) { setActionMessage("Chỉ Admin/Owner được tạo phiên đối soát từ danh sách đơn."); return; }
     if (bulkReconcilingCod || !checkedOrders.length) return;
     const orderCodes = [...new Set(checkedOrders.map((order) => String(order.orderCode || "").trim()).filter(Boolean))];
     if (!orderCodes.length) {
@@ -9441,7 +9445,7 @@ getPaidRevenueAmount(o)
                     </button>
                   ) : null}
 
-                  <button
+                  {canAdminReconcile ? <button
                     type="button"
                     onClick={() => void reconcileCheckedOrders()}
                     disabled={bulkReconcilingCod || !checkedOrders.length}
@@ -9449,7 +9453,7 @@ getPaidRevenueAmount(o)
                     className="h-9 min-w-[124px] rounded-2xl bg-neutral-950 px-4 text-xs font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {bulkReconcilingCod ? "Đang đối soát..." : `Đối soát COD (${checkedOrders.length})`}
-                  </button>
+                  </button> : null}
 
                   {canCreateOrder && singleCheckedOrder ? (
                     <button
@@ -9614,11 +9618,11 @@ getPaidRevenueAmount(o)
                 <thead className="sticky top-0 z-40 bg-neutral-50 shadow-[0_2px_0_rgba(0,0,0,0.08)]">
                   <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
                     <th className="sticky left-0 z-20 w-[44px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 shadow-[8px_0_12px_-12px_rgba(0,0,0,0.35)]">
-                      <input
+                      {canAdminReconcile ? <input
                         type="checkbox"
                         checked={allChecked}
                         onChange={toggleCheckAllVisible}
-                      />
+                      /> : null}
                     </th>
 
                     {orderedVisibleColumns.map(renderColumnHeader)}

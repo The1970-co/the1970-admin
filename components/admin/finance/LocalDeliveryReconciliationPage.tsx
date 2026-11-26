@@ -314,6 +314,7 @@ export default function LocalDeliveryReconciliationPage() {
   const [bulkMessage, setBulkMessage] = useState("");
   const [actionScope, setActionScope] = useState<ActionScope>("selected");
   const [payingRow, setPayingRow] = useState<any>(null);
+  const [verifiedPrepaid, setVerifiedPrepaid] = useState(false);
   const [paymentRows, setPaymentRows] = useState<
     Array<{ paymentSourceId: string; amount: string }>
   >([{ paymentSourceId: "", amount: "" }]);
@@ -736,7 +737,7 @@ export default function LocalDeliveryReconciliationPage() {
       return;
     }
 
-    const amount = Number(row.reconciliationCodAmount || row.needCollectAmount || 0);
+    const amount = Number(row.reconciliationCodAmount ?? row.needCollectAmount ?? 0);
     const fee = Number(row.reconciliationShippingFee || row.shippingFee || 0);
     const branchSources = paymentSourcesForOrderBranch(paymentSources, branches, row);
     const defaultSourceId = branchSources.some((source) => String(source.id) === String(paymentSourceId))
@@ -749,6 +750,7 @@ export default function LocalDeliveryReconciliationPage() {
     }
 
     setPayingRow(row);
+    setVerifiedPrepaid(false);
     setPaymentRows([{ paymentSourceId: defaultSourceId, amount: String(Math.max(0, amount)) }]);
     setShippingFeePayer("SHOP");
     setShippingFeeAmount(fee ? String(fee) : "");
@@ -770,9 +772,13 @@ export default function LocalDeliveryReconciliationPage() {
     }
 
     const total = cleanRows.reduce((sum, row) => sum + row.amount, 0);
-    const target = Number(payingRow.reconciliationCodAmount || payingRow.needCollectAmount || 0);
+    const target = Number(payingRow.reconciliationCodAmount ?? payingRow.needCollectAmount ?? 0);
     const shippingFeeValue = Number(String(shippingFeeAmount || "0").replace(/[^\d]/g, "") || 0);
 
+    if (target === 0 && Number(payingRow.finalAmount || 0) > 0 && !verifiedPrepaid) {
+      alert("Hãy kiểm tra giao dịch chuyển khoản thực nhận và tích xác nhận trước khi hoàn tất đối soát COD 0đ.");
+      return;
+    }
     if (target > 0 && total > target) {
       alert("Tổng tiền hàng thu của khách không được lớn hơn COD cần thu.");
       return;
@@ -792,6 +798,7 @@ export default function LocalDeliveryReconciliationPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             payments: cleanRows,
+            verifiedPrepaid,
             shippingFeeSettlement: {
               payer: shippingFeePayer,
               amount: shippingFeeValue,
@@ -1136,7 +1143,7 @@ export default function LocalDeliveryReconciliationPage() {
         </div>
 
         <div className="mt-5 overflow-x-auto rounded-2xl border border-neutral-200">
-          <table className="w-full min-w-[1900px] text-left text-sm">
+          <table className="w-full min-w-[2650px] text-left text-sm">
             <thead className="bg-neutral-50 text-neutral-500">
               <tr>
                 <th className="w-10 px-4 py-3 font-medium">
@@ -1149,8 +1156,14 @@ export default function LocalDeliveryReconciliationPage() {
                 <th className="px-4 py-3 font-medium">Trạng thái đơn</th>
                 <th className="px-4 py-3 font-medium">Trạng thái giao</th>
                 <th className="px-4 py-3 font-medium">Đối soát</th>
-                <th className="px-4 py-3 text-right font-medium">COD</th>
-                <th className="px-4 py-3 text-right font-medium">Phí ship</th>
+                <th className="px-4 py-3 text-right font-medium">Tổng đơn</th>
+                <th className="px-4 py-3 text-right font-medium">Tiền hàng</th>
+                <th className="px-4 py-3 text-right font-medium">Giảm giá</th>
+                <th className="px-4 py-3 text-right font-medium">Đã thanh toán trước</th>
+                <th className="px-4 py-3 text-right font-medium">COD còn thu</th>
+                <th className="px-4 py-3 text-right font-medium">Phí ship HVC</th>
+                <th className="px-4 py-3 text-right font-medium">Khách trả ship</th>
+                <th className="px-4 py-3 text-right font-medium">Shop nhận sau phí (tham khảo)</th>
                 <th className="px-4 py-3 font-medium">Nguồn tiền / phân bổ</th>
                 <th className="px-4 py-3 text-right font-medium">Đã thu</th>
                 <th className="px-4 py-3 text-right font-medium">Còn thu</th>
@@ -1249,8 +1262,14 @@ export default function LocalDeliveryReconciliationPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold">{currency(row.codAmount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold">{currency(row.finalAmount)}</td>
+                    <td className="px-4 py-3 text-right">{currency(row.goodsAmount)}</td>
+                    <td className="px-4 py-3 text-right">{currency(row.discountAmount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-emerald-700">{currency(row.paidAmount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold">{currency(row.needCollectAmount)}</td>
                     <td className="px-4 py-3 text-right">{currency(row.shippingFee)}</td>
+                    <td className="px-4 py-3 text-right">{currency(row.shippingFeeCustomer)}</td>
+                    <td className="px-4 py-3 text-right">{currency(row.shopReceiveAfterShipping)}</td>
                     <td className="px-4 py-3 text-xs">
                       {(row.paymentSourcesBreakdown || []).length
                         ? row.paymentSourcesBreakdown.map((p: any) => (
@@ -1309,7 +1328,7 @@ export default function LocalDeliveryReconciliationPage() {
                           Thanh toán
                         </button>
                         <button
-                          disabled={!row.reconciliationId || row.reconciliationStatus === "PAID" || row.reconciliationStatus === "CANCELLED"}
+                          disabled={!row.reconciliationId || row.reconciliationStatus !== "DRAFT"}
                           onClick={() => cancelReconciliation(row)}
                           className="rounded-xl border border-red-200 px-3 py-2 text-xs font-medium text-red-600 disabled:opacity-40"
                         >
@@ -1348,7 +1367,7 @@ export default function LocalDeliveryReconciliationPage() {
                     {payingRow.reconciliationCode} · {payingRow.orderCode}
                   </h3>
                   <p className="mt-1 text-sm text-neutral-500">
-                    COD cần thu: <b className="text-neutral-950">{currency(payingRow.reconciliationCodAmount || payingRow.needCollectAmount || 0)}</b>
+                    COD cần thu: <b className="text-neutral-950">{currency(payingRow.reconciliationCodAmount ?? payingRow.needCollectAmount ?? 0)}</b>
                   </p>
                   <p className="mt-1 text-sm text-neutral-500">
                     Phí ship cần chi: <b className="text-neutral-950">{currency(Number(shippingFeeAmount || payingRow.reconciliationShippingFee || payingRow.shippingFee || 0))}</b>
@@ -1361,6 +1380,18 @@ export default function LocalDeliveryReconciliationPage() {
                   Đóng
                 </button>
               </div>
+
+              {Number(payingRow.reconciliationCodAmount ?? payingRow.needCollectAmount ?? 0) === 0 && Number(payingRow.finalAmount || 0) > 0 ? (
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm">
+                  <div className="font-bold text-amber-900">Đơn COD 0đ — cần xác nhận tiền chuyển khoản trước</div>
+                  <div className="mt-1">Tổng đơn: <b>{currency(payingRow.finalAmount)}</b> · Hệ thống ghi nhận: <b>{currency(payingRow.paidAmount)}</b></div>
+                  <p className="mt-1 text-amber-800">Dòng thanh toán trong đơn không chứng minh ngân hàng đã nhận tiền. Admin phải kiểm tra sao kê/nguồn tiền thực tế.</p>
+                  <label className="mt-3 flex cursor-pointer items-start gap-2 font-semibold">
+                    <input type="checkbox" checked={verifiedPrepaid} onChange={e => setVerifiedPrepaid(e.target.checked)} className="mt-1" />
+                    <span>Tôi đã đối chiếu và xác nhận nhận đủ khoản chuyển khoản trước của đơn này.</span>
+                  </label>
+                </div>
+              ) : null}
 
               <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
                 <div className="grid gap-3 md:grid-cols-[180px_1fr]">
@@ -1500,7 +1531,7 @@ export default function LocalDeliveryReconciliationPage() {
         <div className="mt-4 overflow-x-auto rounded-2xl border border-neutral-200">
           <table className="min-w-[1100px] w-full text-left text-sm">
             <thead className="bg-neutral-50 text-neutral-600"><tr>
-              <th className="p-3">Mã phiếu</th><th className="p-3">Đơn hàng / vận đơn</th><th className="p-3">HVC</th><th className="p-3">Ngày tạo phiếu</th><th className="p-3">Ngày đối soát</th><th className="p-3">Ngày thanh toán</th><th className="p-3">Trạng thái</th><th className="p-3 text-right">COD / đã thu</th><th className="p-3 text-right">Chi tiết</th>
+              <th className="p-3">Mã phiếu</th><th className="p-3">Đơn hàng / vận đơn</th><th className="p-3">HVC</th><th className="p-3">Ngày tạo phiếu</th><th className="p-3">Ngày đối soát</th><th className="p-3">Ngày thanh toán</th><th className="p-3">Trạng thái</th><th className="p-3 text-right">Tổng đơn / COD / ĐS thu</th><th className="p-3 text-right">Chi tiết</th>
             </tr></thead>
             <tbody>
               {(voucherList.items || []).map((v: any) => (
@@ -1512,8 +1543,25 @@ export default function LocalDeliveryReconciliationPage() {
                   <td className="p-3">{formatDateTime(v.confirmedAt)}</td>
                   <td className="p-3">{formatDateTime(v.paidAt)}</td>
                   <td className="p-3">{v.status || "—"}</td>
-                  <td className="p-3 text-right">{currency(v.codAmount)}<div className="text-xs text-emerald-700">Đã thu {currency(v.paidAmount)}</div></td>
-                  <td className="p-3 text-right"><button onClick={() => void openVoucher(v.id)} className="rounded-lg border px-3 py-1.5 hover:bg-neutral-50">Xem nhanh</button></td>
+                  <td className="p-3 text-right">Đơn {currency(v.finalAmount)}<div className="text-xs">COD {currency(v.codAmount)}</div><div className="text-xs text-emerald-700">ĐS thu thêm {currency(v.paidAmount)}</div></td>
+                  <td className="p-3 text-right">
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => void openVoucher(v.id)} className="rounded-lg border px-3 py-1.5 hover:bg-neutral-50">Xem nhanh</button>
+                      {String(v.status || "").toUpperCase() === "DRAFT" ? (
+                        <button className="rounded-lg border border-red-200 px-3 py-1.5 text-red-600"
+                          onClick={async () => {
+                            if (!confirm(`Bỏ đơn ${v.orderCode || ""} khỏi đối soát nháp ${v.code || ""}? Thao tác này chỉ hủy phiếu, không xóa đơn gốc.`)) return;
+                            try {
+                              await apiJson(`/finance/local-delivery-reconciliation/reconciliations/${v.id}/cancel`, {
+                                method: "PATCH", headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ note: "Bỏ chọn nhầm khỏi phiếu đối soát", cancelledById: currentUser?.id, cancelledByName: currentUser?.name || currentUser?.fullName }),
+                              });
+                              await Promise.all([loadData(), loadVoucherList()]);
+                            } catch (err) { alert(err instanceof Error ? err.message : "Không thể bỏ phiếu."); }
+                          }}>Bỏ đơn</button>
+                      ) : null}
+                    </div>
+                  </td>
                 </tr>
               ))}
               {!voucherLoading && !(voucherList.items || []).length ? <tr><td colSpan={9} className="p-8 text-center text-neutral-400">Chưa có phiếu</td></tr> : null}

@@ -65,6 +65,13 @@ type HistoryRow = {
   customerOrderCode?: string | null;
   ghnStatus?: string | null;
   codAmount?: number | null;
+  systemCodAmount?: number | null;
+  orderTotal?: number | null;
+  orderPaymentStatus?: string | null;
+  recordedPrepayment?: number | null;
+  outstandingAmount?: number | null;
+  customerShippingFee?: number | null;
+  systemShippingFee?: number | null;
   serviceFee?: number | null;
   totalReconcileAmount?: number | null;
   reconciliationStatus?: string | null;
@@ -96,6 +103,34 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
   const [codEdits, setCodEdits] = useState<Record<string, string>>({});
   const [savingAllCod, setSavingAllCod] = useState(false);
   const [confirmingBatch, setConfirmingBatch] = useState(false);
+  const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; detail: string; confirmLabel: string; tone: "green" | "red"; onConfirm: () => void | Promise<void> } | null>(null);
+
+  async function removeDraftRow(row: HistoryRow) {
+    if (!batchId || !row.id || deletingRowId || isConfirmedRow(row) || isPaidRow(row)) return;
+    setConfirmDialog({ title: "Bỏ đơn khỏi phiên?", detail: `Bỏ ${row.orderCode || row.ghnCode || row.id} khỏi phiên nháp. Đơn gốc không bị xóa.`, confirmLabel: "Bỏ đơn", tone: "red", onConfirm: () => void executeRemoveDraftRow(row) });
+  }
+
+  async function executeRemoveDraftRow(row: HistoryRow) {
+    setDeletingRowId(row.id);
+    setMessage("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/finance/ghn-cod-reconciliation/rows/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ batchId, rowIds: [row.id] }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Không bỏ được đơn khỏi phiên.");
+      await loadDetail();
+      setMessage("Đã bỏ đơn khỏi phiên đối soát. Đơn gốc không bị xóa.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không bỏ được đơn khỏi phiên.");
+    } finally {
+      setDeletingRowId(null);
+    }
+  }
 
   async function confirmReconciliation() {
     if (!batchId || !data?.rows?.length || confirmingBatch || savingAllCod) return;
@@ -106,7 +141,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
     const eligible = data.rows.filter((row) => !isConfirmedRow(row) && !isPaidRow(row));
     const unresolved = eligible.filter((row) => {
       const issues = normalizeIssues(row.issues);
-      return issues.includes("MISSING_PARTNER_COD") || issues.includes("NOT_FOUND_INTERNAL_ORDER");
+      return (issues.includes("MISSING_PARTNER_COD") && Number(row.systemCodAmount ?? -1) !== 0) || issues.includes("NOT_FOUND_INTERNAL_ORDER");
     });
     if (!eligible.length) {
       setMessage("Tất cả dòng trong phiên đã được xác nhận hoặc thanh toán.");
@@ -116,11 +151,16 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
       setMessage(`Còn ${unresolved.length} dòng chưa có COD HVC hoặc chưa tìm thấy đơn nội bộ. Cần xử lý trước khi xác nhận.`);
       return;
     }
-    // API hiện tại còn tạo payment COD cho đơn khi xác nhận, vì vậy phải thông báo rõ.
-    const accepted = window.confirm(
-      `Xác nhận đối soát ${eligible.length} đơn?\n\nLƯU Ý: Backend hiện tại đồng thời ghi nhận thanh toán COD vào đơn gốc khi xác nhận đối soát. Chỉ tiếp tục nếu số tiền đối tác đã được kiểm chứng và thực sự được thanh toán.\n\nBạn có chắc muốn thực hiện?`,
-    );
-    if (!accepted) return;
+    setConfirmDialog({
+      title: `Xác nhận đối soát ${eligible.length} đơn?`,
+      detail: "Xác nhận trạng thái đối soát COD. Với COD > 0, hệ thống có thể ghi nhận khoản COD thực nhận. COD 0đ không tạo thêm tiền thu; tiền khách chuyển khoản trước phải được kiểm tra riêng trên sao kê.",
+      confirmLabel: "Xác nhận đối soát",
+      tone: "green",
+      onConfirm: () => void executeConfirmReconciliation(eligible.map((row) => row.id)),
+    });
+  }
+
+  async function executeConfirmReconciliation(rowIds: string[]) {
     setConfirmingBatch(true);
     setMessage("");
     try {
@@ -128,12 +168,12 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
       const res = await fetch(`${API_BASE}/finance/ghn-cod-reconciliation/${encodeURIComponent(batchId)}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ rowIds: eligible.map((row) => row.id) }),
+        body: JSON.stringify({ rowIds }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(Array.isArray(json?.message) ? json.message.join(", ") : json?.message || "Xác nhận đối soát thất bại.");
       await loadDetail();
-      setMessage(`Đã xác nhận ${Number(json?.affectedRows ?? eligible.length)} dòng đối soát. Kiểm tra trạng thái thanh toán trên đơn gốc.`);
+      setMessage(`Đã xác nhận ${Number(json?.affectedRows ?? rowIds.length)} dòng đối soát. Kiểm tra trạng thái thanh toán trên đơn gốc.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Không xác nhận được phiên đối soát.");
     } finally {
@@ -247,7 +287,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
   const batch = data?.batch;
   const rows = Array.isArray(data?.rows) ? data.rows : [];
   const isManualBatch = String(batch?.sourceType || "").toUpperCase().includes("MANUAL");
-  const isMissingCod = (row: HistoryRow) => normalizeIssues(row.issues).includes("MISSING_PARTNER_COD");
+  const isMissingCod = (row: HistoryRow) => normalizeIssues(row.issues).includes("MISSING_PARTNER_COD") && Number(row.systemCodAmount ?? -1) !== 0;
   const getCodInputValue = (row: HistoryRow) => codEdits[row.id] ?? (isMissingCod(row) ? (isManualBatch ? "0" : "") : String(row.codAmount ?? 0));
   const pendingCodRows = rows.filter((row) => {
     if (isConfirmedRow(row) || isPaidRow(row)) return false;
@@ -257,14 +297,18 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
       if (!isMissingCod(row) && /^\d+$/.test(formatted) && Number(formatted) === Number(row.codAmount ?? 0)) return false;
       return true;
     }
-    return isManualBatch && isMissingCod(row);
+    return isManualBatch && isMissingCod(row) && Number(row.systemCodAmount ?? -1) !== 0;
   });
+
+  const visibleBusinessIssues = (row: HistoryRow) => getBusinessIssues(row).filter(
+    (issue) => !(issue === "MISSING_PARTNER_COD" && Number(row.systemCodAmount ?? -1) === 0),
+  );
 
   const issueOptions = useMemo(() => {
     const counts = new Map<string, number>();
 
     rows.forEach((row) => {
-      const issues = getBusinessIssues(row);
+      const issues = visibleBusinessIssues(row);
       if (!issues.length) {
         counts.set("MATCHED", (counts.get("MATCHED") || 0) + 1);
         return;
@@ -301,7 +345,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
 
       if (q && !blob.includes(q)) return false;
 
-      const businessIssues = getBusinessIssues(row);
+      const businessIssues = visibleBusinessIssues(row);
       const actionStatus = String(row.actionStatus || "").toUpperCase();
       const reconciliationStatus = String(row.reconciliationStatus || "").toUpperCase();
 
@@ -331,7 +375,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
   }, [rows, query, issueFilter, statusFilter]);
 
   const summary = useMemo(() => {
-    const issueRows = rows.filter((row) => getBusinessIssues(row).length > 0);
+    const issueRows = rows.filter((row) => visibleBusinessIssues(row).length > 0);
     const paidRows = rows.filter(isPaidRow);
     const confirmedRows = rows.filter(isConfirmedRow);
     const cod = rows.reduce((sum, row) => sum + Number(row.codAmount || 0), 0);
@@ -351,6 +395,18 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
 
   return (
     <div className="space-y-5 bg-[#f7f7f8] p-5">
+      {confirmDialog ? (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/45 p-4" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmDialog(null); }}>
+          <div role="dialog" aria-modal="true" aria-label={confirmDialog.title} className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-extrabold text-neutral-950">{confirmDialog.title}</h3>
+            <p className="mt-3 whitespace-pre-line text-sm leading-6 text-neutral-600">{confirmDialog.detail}</p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700" onClick={() => setConfirmDialog(null)}>Hủy</button>
+              <button type="button" className={`rounded-xl px-4 py-2.5 text-sm font-bold text-white ${confirmDialog.tone === "red" ? "bg-red-600" : "bg-emerald-700"}`} onClick={() => { const action = confirmDialog.onConfirm; setConfirmDialog(null); void action(); }}>{confirmDialog.confirmLabel}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm text-neutral-500">
@@ -424,11 +480,11 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
           <Info label="Thanh toán" value={formatDateTime(batch?.paidAt)} />
         </div>
 
-        {Array.isArray(batch?.issueSummary) && batch.issueSummary.length ? (
+        {Array.isArray(batch?.issueSummary) && batch.issueSummary.filter((item) => item.code !== "MISSING_PARTNER_COD" || rows.some((row) => visibleBusinessIssues(row).includes("MISSING_PARTNER_COD"))).length ? (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
             <div className="text-sm font-extrabold text-amber-900">Lý do cần kiểm tra trong phiên</div>
             <div className="mt-2 flex flex-wrap gap-2">
-              {batch.issueSummary.map((item) => (
+              {batch.issueSummary.filter((item) => item.code !== "MISSING_PARTNER_COD" || rows.some((row) => visibleBusinessIssues(row).includes("MISSING_PARTNER_COD"))).map((item) => (
                 <span
                   key={item.code}
                   className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-bold text-amber-800"
@@ -445,6 +501,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-neutral-950">Danh sách đơn trong phiên</h2>
+            <p className="mt-1 text-xs text-amber-700">“Đã ghi nhận” là tiền trả trước ngoài COD trên hệ thống, chưa chứng minh đã vào tài khoản ngân hàng. “Chưa trả trước” không phải công nợ cuối cùng của đơn. COD 0đ không tự ghi nhận thêm tiền.</p>
             <p className="mt-1 text-sm text-neutral-500">
               Đang hiển thị <b>{formatNumber(filteredRows.length)}</b> / <b>{formatNumber(rows.length)}</b> dòng. <span className="ml-2">Các ô viền vàng chưa lưu; sửa nhiều dòng rồi bấm <b>Lưu tất cả COD</b> một lần.</span>
             </p>
@@ -484,26 +541,32 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
         </div>
 
         <div className="mt-4 overflow-auto rounded-2xl border border-neutral-200">
-          <table className="w-full min-w-[1420px] text-sm">
+          <table className="w-full min-w-[2250px] text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="px-4 py-3">Đơn nội bộ</th>
                 <th className="px-4 py-3">Mã HVC</th>
                 <th className="px-4 py-3">Trạng thái GHN</th>
+                <th className="px-4 py-3 text-right">Tổng đơn</th>
+                <th className="px-4 py-3 text-right">Đã ghi nhận</th>
+                <th className="px-4 py-3 text-right">Chưa trả trước</th>
+                <th className="px-4 py-3 text-right">COD hệ thống</th>
                 <th className="px-4 py-3 text-right">COD đối tác HVC</th>
                 <th className="px-4 py-3 text-right">Phí</th>
-                <th className="px-4 py-3 text-right">Thực nhận</th>
+                <th className="px-4 py-3 text-right">Ship khách trả</th>
+                <th className="px-4 py-3 text-right">Ship HVC</th>
+                <th className="px-4 py-3 text-right">Thực nhận HVC</th>
                 <th className="px-4 py-3">Đối soát</th>
                 <th className="px-4 py-3">Vấn đề</th>
                 <th className="px-4 py-3">Thời gian</th>
-                <th className="px-4 py-3 text-right">Mở đơn</th>
+                <th className="px-4 py-3 text-right">Thao tác</th>
               </tr>
             </thead>
 
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={16} className="px-4 py-10 text-center text-neutral-500">
                     Đang tải chi tiết phiên đối soát...
                   </td>
                 </tr>
@@ -522,6 +585,10 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
                     <td className="px-4 py-3">
                       {formatGhnStatus(row.ghnStatus)}
                     </td>
+                    <td className="px-4 py-3 text-right font-semibold">{row.orderTotal == null ? "—" : money(row.orderTotal)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-700">{row.recordedPrepayment == null ? "—" : money(row.recordedPrepayment)}</td>
+                    <td className="px-4 py-3 text-right">{row.outstandingAmount == null ? "—" : money(row.outstandingAmount)}</td>
+                    <td className="px-4 py-3 text-right">{row.systemCodAmount == null ? "—" : money(row.systemCodAmount)}</td>
                     <td className="px-4 py-3 text-right font-semibold">
                       {!isConfirmedRow(row) && !isPaidRow(row) ? (
                         <input
@@ -538,12 +605,16 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">{money(row.serviceFee)}</td>
+                    <td className="px-4 py-3 text-right">{row.customerShippingFee == null ? "—" : money(row.customerShippingFee)}</td>
+                    <td className="px-4 py-3 text-right">{row.systemShippingFee == null ? "—" : money(row.systemShippingFee)}</td>
                     <td className="px-4 py-3 text-right font-semibold">{money(row.totalReconcileAmount)}</td>
                     <td className="px-4 py-3">
                       <StatusPill status={row.actionStatus || row.reconciliationStatus} />
                     </td>
                     <td className="max-w-[300px] px-4 py-3">
-                      {formatHistoryIssues(row.issues)}
+                      {visibleBusinessIssues(row).length ? formatHistoryIssues(visibleBusinessIssues(row)) : (
+                        <span className="text-xs text-emerald-700">{Number(row.systemCodAmount ?? -1) === 0 ? "COD 0đ · không cần thu hộ" : "Khớp"}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-neutral-500">
                       <div>Lưu: {formatDateTime(row.savedAt)}</div>
@@ -551,6 +622,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
                       {row.paidAt ? <div>TT: {formatDateTime(row.paidAt)}</div> : null}
                     </td>
                     <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
                       {row.orderId ? (
                         <Link
                           href={`/orders/${row.orderId}`}
@@ -561,12 +633,20 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
                       ) : (
                         <span className="text-xs font-semibold text-neutral-400">—</span>
                       )}
+                      {!isConfirmedRow(row) && !isPaidRow(row) ? (
+                        <button type="button" disabled={Boolean(deletingRowId) || confirmingBatch || savingAllCod}
+                          onClick={() => void removeDraftRow(row)}
+                          className="rounded-xl border border-red-200 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-40">
+                          {deletingRowId === row.id ? "Đang bỏ..." : "Bỏ đơn"}
+                        </button>
+                      ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={16} className="px-4 py-10 text-center text-neutral-500">
                     Không có dòng nào phù hợp bộ lọc.
                   </td>
                 </tr>

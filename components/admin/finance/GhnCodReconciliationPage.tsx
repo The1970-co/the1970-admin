@@ -1322,10 +1322,8 @@ export default function GhnCodReconciliationPage() {
                 Đối soát nhanh bằng mã đơn
               </h3>
               <p className="mt-1 text-sm text-neutral-500">
-                Dán 1 hoặc nhiều mã đơn nội bộ / mã vận đơn HVC (GHN, SPX, AhaMove, Viettel Post...). Có thể xuống
-                dòng, cách nhau bằng dấu phẩy, dấu cách hoặc paste nguyên đoạn
-                từ Excel. Đối soát thực tế: mỗi dòng gồm mã vận đơn, COD GHN,
-                phí GHN (ngăn cách bằng Tab hoặc dấu |).
+                Dùng để đối soát COD GHN. Dán mã đơn hoặc vận đơn GHN, mỗi dòng có thể kèm COD thực tế và phí GHN (ngăn bằng Tab hoặc dấu |).
+                Đơn đã thanh toán trước và COD hệ thống 0đ không cần nhập COD đối tác. Đơn Ahamove/Grab/shipper riêng thực hiện tại Đối soát nội thành.
               </p>
             </div>
             <button
@@ -1348,8 +1346,8 @@ export default function GhnCodReconciliationPage() {
 
           <div className="mt-2 text-xs text-neutral-500">
             Cách này tạo một phiên đối soát nhập tay, lưu DB như upload Excel.
-            Chỉ dán mã: xem COD hệ thống, trạng thái chờ nhập COD đối tác (chưa được xác nhận).
-            Dán mã kèm COD GHN: đối chiếu và tính tiền lệch thực tế.
+            Chỉ dán mã: COD hệ thống 0đ được xử lý là không thu hộ; COD lớn hơn 0đ vẫn cần đối chiếu số thực từ GHN.
+            Tiền khách chuyển khoản chỉ là đã ghi nhận trên hệ thống, không mặc nhiên là ngân hàng đã nhận.
           </div>
         </div>
       </section>
@@ -2077,7 +2075,9 @@ function getRowKey(row: Row) {
 }
 
 function getBusinessIssues(row: Row) {
-  return (row.issueTypes || []).filter((x) => !ACTION_ISSUES.has(x));
+  return (row.issueTypes || []).filter((x) =>
+    !ACTION_ISSUES.has(x) && !(x === "MISSING_PARTNER_COD" && row.systemCodAmount != null && Number(row.systemCodAmount) === 0)
+  );
 }
 
 function getActionIssues(row: Row) {

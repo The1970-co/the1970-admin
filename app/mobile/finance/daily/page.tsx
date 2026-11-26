@@ -460,13 +460,13 @@ function RatioBar({ value, max }: { value: number; max: number }) {
 }
 
 const BRANCH_LABELS = ["THÁI HÀ", "QUỐC OAI", "CHÙA LÁNG", "XÃ ĐÀN"] as const;
-function renderMoneySourcesTable(sources: AnyRow[]) {
+function renderMoneySourcesTable(sources: AnyRow[], expanded = false) {
   let lastGroup = "";
   return (
     <table className="w-full min-w-[690px] border-collapse text-[11px] tabular-nums">
       <thead className="sticky top-0 z-20 bg-neutral-100 text-neutral-500">
         <tr>
-          <th className="sticky left-0 z-30 min-w-[180px] border-r border-neutral-200 bg-neutral-100 px-2 py-2 text-left font-bold">Nguồn tiền</th>
+          <th className={`sticky left-0 z-30 border-r border-neutral-200 bg-neutral-100 py-2 text-left font-bold ${expanded ? "w-[180px] min-w-[180px] max-w-[180px] px-2" : "w-[76px] min-w-[76px] max-w-[76px] px-1"}`}>Nguồn tiền</th>
           <th className="min-w-[120px] px-2 py-2 text-right font-bold">Tiền vào</th>
           <th className="min-w-[120px] px-2 py-2 text-right font-bold">Tiền ra</th>
           <th className="min-w-[125px] px-2 py-2 text-right font-bold">Ròng</th>
@@ -486,7 +486,7 @@ function renderMoneySourcesTable(sources: AnyRow[]) {
             <Fragment key={`${source.paymentSourceId || sourceName(source)}-${index}`}>
               {showGroup ? <tr className="bg-neutral-200/80"><td colSpan={5} className="sticky left-0 px-2 py-1.5 text-[10px] font-black uppercase tracking-wider text-neutral-700">{group}</td></tr> : null}
               <tr className={`border-t border-neutral-100 ${bg}`}>
-                <td className={`sticky left-0 z-10 max-w-[180px] border-r border-neutral-100 px-2 py-2 font-bold text-neutral-900 ${bg}`} title={sourceName(source)}><div className="truncate">{sourceName(source)}</div></td>
+                <td className={`sticky left-0 z-10 border-r border-neutral-100 py-2 font-bold text-neutral-900 ${bg} ${expanded ? "w-[180px] min-w-[180px] max-w-[180px] px-2" : "w-[76px] min-w-[76px] max-w-[76px] px-1"}`} title={sourceName(source)}><div className={expanded ? "truncate" : "line-clamp-2 break-words text-[10px] leading-3"}>{sourceName(source)}</div></td>
                 <td className="whitespace-nowrap px-2 py-2 text-right">{money(totalIn)}</td>
                 <td className="whitespace-nowrap px-2 py-2 text-right">{money(totalOut)}</td>
                 <td className={`whitespace-nowrap px-2 py-2 text-right font-extrabold ${net < 0 ? "text-rose-700" : "text-neutral-950"}`}>{money(net)}</td>
@@ -1112,7 +1112,7 @@ export default function MobileFinanceDailyPage() {
                 <button type="button" onClick={() => setWideSourceTable(false)} className="flex items-center gap-2 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-bold text-white"><Minimize2 className="h-4 w-4" /> Đóng</button>
               </div>
               <div className="min-h-0 flex-1 overflow-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
-                {renderMoneySourcesTable(sources)}
+                {renderMoneySourcesTable(sources, true)}
               </div>
             </div>
           </div>
