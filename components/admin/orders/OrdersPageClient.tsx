@@ -2095,6 +2095,19 @@ function normalizeShipmentTextForUi(value?: string | null) {
 function shipmentDisplayStatusLabel(order: AdminOrder) {
   const anyOrder: any = order || {};
   const shipment: any = anyOrder.shipment || {};
+  const exactStatus = String(shipment.shippingStatus || "").toUpperCase().trim();
+  const returnStages: Record<string, string> = {
+    DELIVERY_FAILED: "Giao khách thất bại",
+    DELIVERY_FAIL: "Giao khách thất bại",
+    WAITING_TO_RETURN: "Chờ xử lý chuyển hoàn",
+    RETURN_TRANSPORTING: "Đang trung chuyển hoàn",
+    RETURN_SORTING: "Đang phân loại hàng hoàn",
+    RETURN_FAILED: "Hoàn hàng thất bại",
+    RETURN_FAIL: "Hoàn hàng thất bại",
+    RETURNING: "Đang hoàn về shop",
+    RETURN: "Đang hoàn về shop",
+    RETURNED: "GHN đã hoàn về shop",
+  };
   const returnReceiveStatus = String(
     shipment.returnReceiveStatus ||
       shipment.return_receive_status ||
@@ -2126,10 +2139,8 @@ function shipmentDisplayStatusLabel(order: AdminOrder) {
   // Một số API danh sách đơn chưa trả metadata.returnReceiveStatus,
   // nhưng sau khi xác nhận nhận hoàn backend đã set fulfillmentStatus = RETURNED.
   // Ưu tiên hiển thị trạng thái vận hành cuối cùng để DS đơn đồng bộ với chi tiết đơn.
-  if ((fulfillmentStatus === "RETURNED" || orderStatus === "RETURNED") && looksLikeReturnShipment) {
-    return "Đã nhận hàng hoàn";
-  }
 
+  if (returnStages[exactStatus]) return returnStages[exactStatus];
   if (returnReceiveStatus === "WAITING_CONFIRM" || returnReceiveStatus === "CONFIRMED") {
     return "Chờ xác nhận hàng hoàn";
   }
@@ -2137,7 +2148,9 @@ function shipmentDisplayStatusLabel(order: AdminOrder) {
 
   if (["RETURNED", "RETURNED_TO_CLIENT"].includes(value)) return "Đã hoàn hàng";
 
-  if (looksLikeReturnShipment) {
+  // Only infer from descriptive text when carrier has not supplied a canonical state.
+  // A previous failed-delivery note must never override a current WAITING_TO_RETURN.
+  if (!exactStatus && looksLikeReturnShipment) {
     return "Đang hoàn hàng";
   }
 
@@ -2188,9 +2201,10 @@ function shipmentDisplayStatusLabel(order: AdminOrder) {
     case "COMPLETED":
       return "Giao thành công";
 
+    case "WAITING_TO_RETURN":
+      return "Chờ xử lý chuyển hoàn";
     case "RETURN":
     case "RETURNING":
-    case "WAITING_TO_RETURN":
       return "Đang hoàn hàng";
 
     case "RETURNED":
@@ -2424,7 +2438,14 @@ const DELIVERY_STATUS_FILTER_OPTIONS = [
   "Đang lấy hàng",
   "Đang giao hàng",
   "Giao thành công",
+  "Giao khách thất bại",
+  "Chờ xử lý chuyển hoàn",
+  "Đang trung chuyển hoàn",
+  "Đang phân loại hàng hoàn",
+  "Đang hoàn về shop",
   "Đang hoàn hàng",
+  "Hoàn hàng thất bại",
+  "GHN đã hoàn về shop",
   "Đã hoàn hàng",
   "Đã nhận hàng hoàn",
   "Đang tìm tài xế",
@@ -2558,7 +2579,8 @@ function getShipmentSyncIndicator(order: AdminOrder) {
 
   const isDelivered = matchesAny(["DELIVERED", "DELIVERY_SUCCESS", "COMPLETED"]);
   const isReturned = matchesAny(["RETURNED", "RETURNED_TO_CLIENT"]);
-  const isReturning = matchesAny(["RETURNING", "RETURN", "WAITING_TO_RETURN"]);
+  const isWaitingReturnDecision = shipmentStatus === "WAITING_TO_RETURN";
+  const isReturning = !isWaitingReturnDecision && matchesAny(["RETURNING", "RETURN", "RETURN_TRANSPORTING", "RETURN_SORTING"]);
   const isCancelled = matchesAny(["CANCELLED", "CANCEL"]);
   const isFailed = matchesAny(["FAILED", "DELIVERY_FAIL", "EXCEPTION", "LOST", "DAMAGE"]);
   const isActive = matchesAny([
@@ -2596,6 +2618,11 @@ function getShipmentSyncIndicator(order: AdminOrder) {
         ? "Đã đồng bộ trạng thái hoàn hàng và đã xác nhận nhận hoàn"
         : "Đã đồng bộ trạng thái đã hoàn hàng / chờ xác nhận nhận hoàn"
       : "GHN đã hoàn hàng nhưng đơn nội bộ chưa đồng bộ xong";
+  } else if (isWaitingReturnDecision) {
+    ok = orderStatus === "SHIPPED" && fulfillmentStatus !== "FULFILLED";
+    label = ok
+      ? "Đã đồng bộ: GHN đang chờ quyết định giao lại hoặc chuyển hoàn"
+      : "GHN đang chờ quyết định giao lại hoặc chuyển hoàn";
   } else if (isReturning) {
     ok = orderStatus === "SHIPPED" && fulfillmentStatus !== "FULFILLED";
     label = ok
@@ -6663,7 +6690,13 @@ export default function OrdersPageClient() {
     }
 
     if (!isAllMultiFilter(appliedDeliveryStatusFilter)) {
-      result = result.filter((o) => multiFilterIncludes(appliedDeliveryStatusFilter, shipmentDisplayStatusLabel(o)));
+      result = result.filter((o) => {
+        const label = shipmentDisplayStatusLabel(o);
+        const selected = selectedMultiFilterValues(appliedDeliveryStatusFilter);
+        return !selected.length || selected.includes(label) ||
+          (selected.includes("Đang hoàn hàng") && ["Đang trung chuyển hoàn", "Đang phân loại hàng hoàn", "Đang hoàn về shop"].includes(label)) ||
+          (selected.includes("Đã hoàn hàng") && label === "GHN đã hoàn về shop");
+      });
     }
 
     if (!isAllMultiFilter(appliedSalesChannelFilter)) {
@@ -9237,10 +9270,19 @@ getPaidRevenueAmount(o)
                     ]}
                   />
 
+                  {/* Giao vận = trạng thái tracking thực tế của hãng (GHN/Ahamove...),
+                      không phải fulfillmentStatus nội bộ của đơn hàng. */}
+                  <MultiFilterSelect
+                    value={deliveryStatusFilter}
+                    onChange={setDeliveryStatusFilter}
+                    allLabel="Tất cả giao vận"
+                    options={deliveryStatusOptions.map((status) => ({ value: status, label: status }))}
+                  />
+
                   <MultiFilterSelect
                     value={fulfillmentFilter}
                     onChange={setFulfillmentFilter}
-                    allLabel="Tất cả giao vận"
+                    allLabel="Trạng thái xử lý giao vận nội bộ"
                     options={[
                       { value: "UNFULFILLED", label: "Chưa giao" },
                       { value: "PROCESSING", label: "Đang chuẩn bị" },
@@ -9248,13 +9290,6 @@ getPaidRevenueAmount(o)
                       { value: "FULFILLED", label: "Đã giao vận / hoàn tất" },
                       { value: "RETURNED", label: "Trả hàng" },
                     ]}
-                  />
-
-                  <MultiFilterSelect
-                    value={deliveryStatusFilter}
-                    onChange={setDeliveryStatusFilter}
-                    allLabel="Tất cả trạng thái giao hàng / vận đơn"
-                    options={deliveryStatusOptions.map((status) => ({ value: status, label: status }))}
                   />
 
                   <MultiFilterSelect
