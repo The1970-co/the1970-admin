@@ -2139,6 +2139,10 @@ export default function OrderDetailPageClient({
   const canEditOrderPermission = hasOrderPermission(currentUser, "orders.edit");
   const canCancelOrderPermission = hasOrderPermission(currentUser, "orders.cancel");
   const canPackShipOrderPermission = hasOrderPermission(currentUser, "orders.pack_ship");
+  const canManualDeliverPermission = hasOrderPermission(currentUser, "orders.manual_deliver") &&
+    !getScopedPermissionRows(currentUser).some((row: any) =>
+      Array.isArray(row?.deniedPermissionKeys) && row.deniedPermissionKeys.includes("orders.manual_deliver")
+    );
   const canCreateReturnPermission = hasOrderPermission(currentUser, "returns.create");
 
   const [provinceOptions, setProvinceOptions] = useState<ProvinceOption[]>([]);
@@ -3827,7 +3831,7 @@ export default function OrderDetailPageClient({
   };
 
   const handleManualDeliveryConfirmation = async () => {
-    if (!order) return;
+    if (!order || !canManualDeliverPermission) return;
     const ok = await askConfirm({
       title: `Xác nhận giao thành công ${order.orderCode}?`,
       description: "Ghi nhận giao thành công vào doanh thu bán hàng NGÀY HÔM NAY. COD vẫn chờ đối soát; không đánh dấu đã thu tiền. Chỉ xác nhận sau khi kiểm tra hàng đã giao thực tế.",
@@ -4304,7 +4308,7 @@ export default function OrderDetailPageClient({
               {getCarrierCode(viewOrder, meta).includes("VIETTEL") &&
                 viewOrder.shipment?.trackingCode &&
                 !["DELIVERED", "RETURNED", "RETURNING", "CANCELLED", "FAILED"].includes(String(viewOrder.shipment?.shippingStatus || "").toUpperCase()) &&
-                canPackShipOrderPermission ? (
+                canManualDeliverPermission ? (
                   <ActionButton tone="dark" disabled={saving} onClick={handleManualDeliveryConfirmation}>
                     Xác nhận giao thành công
                   </ActionButton>

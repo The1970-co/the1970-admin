@@ -5070,6 +5070,10 @@ export default function OrdersPageClient() {
   const canSeeMoney = true;
   const canManageFilterPresets = isOwnerOrAdminUser(currentUser);
   const canAdminReconcile = isOwnerOrAdminUser(currentUser);
+  const canManualDeliver = hasOrderPermission(currentUser, "orders.manual_deliver") &&
+    !getScopedBranchPermissionRows(currentUser).some((row: any) =>
+      Array.isArray(row?.deniedPermissionKeys) && row.deniedPermissionKeys.includes("orders.manual_deliver")
+    );
   const canDeleteOrder = hasOrderPermission(currentUser, "orders.delete");
 
   const userStorageSuffix = useMemo(() => {
@@ -6930,7 +6934,7 @@ export default function OrdersPageClient() {
   };
 
   const confirmCheckedManualDelivery = async () => {
-    if (!canAdminReconcile || bulkManualDelivering || checkedOrders.length === 0) return;
+    if (!canManualDeliver || bulkManualDelivering || checkedOrders.length === 0) return;
     if (checkedOrders.length > 100) { setActionMessage("Chọn tối đa 100 đơn mỗi lần."); return; }
     setBulkManualDelivering(true);
     setActionMessage("");
@@ -6956,7 +6960,7 @@ export default function OrdersPageClient() {
   };
 
   const openManualDeliveryConfirmation = () => {
-    if (!canAdminReconcile || bulkManualDelivering || checkedOrders.length === 0) return;
+    if (!canManualDeliver || bulkManualDelivering || checkedOrders.length === 0) return;
     if (checkedOrders.length > 100) {
       setActionMessage("Chọn tối đa 100 đơn mỗi lần.");
       return;
@@ -9551,7 +9555,7 @@ getPaidRevenueAmount(o)
                     </button>
                   ) : null}
 
-                  {canAdminReconcile ? <button
+                  {canManualDeliver ? <button
                     type="button"
                     onClick={openManualDeliveryConfirmation}
                     disabled={bulkManualDelivering || checkedOrders.length === 0}

@@ -332,6 +332,7 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "orders.edit", label: "Sửa đơn / gán nhân viên", risk: "high" },
       { key: "orders.approve", label: "Duyệt đơn", risk: "high" },
       { key: "orders.pack_ship", label: "Đóng gói / xuất kho / giao hàng", risk: "high" },
+      { key: "orders.manual_deliver", label: "Xác nhận giao thành công thủ công", desc: "Ghi nhận doanh thu ngày xác nhận; COD vẫn chờ đối soát", risk: "critical" },
       { key: "orders.pay", label: "Cập nhật thanh toán", risk: "high" },
       { key: "orders.cancel", label: "Hủy đơn", risk: "critical" },
       { key: "orders.delete", label: "Xóa đơn", risk: "critical" },
