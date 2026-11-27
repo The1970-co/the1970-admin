@@ -3826,6 +3826,29 @@ export default function OrderDetailPageClient({
     router.push(`/orders/create?copyFrom=${encodeURIComponent(viewOrder.id)}`);
   };
 
+  const handleManualDeliveryConfirmation = async () => {
+    if (!order) return;
+    const ok = await askConfirm({
+      title: `Xác nhận giao thành công ${order.orderCode}?`,
+      description: "Ghi nhận giao thành công vào doanh thu bán hàng NGÀY HÔM NAY. COD vẫn chờ đối soát; không đánh dấu đã thu tiền. Chỉ xác nhận sau khi kiểm tra hàng đã giao thực tế.",
+      confirmText: "Xác nhận đã giao",
+      cancelText: "Đóng",
+    });
+    if (!ok) return;
+    try {
+      setSaving(true);
+      setMessage("");
+      const res = await apiFetch(`/shipments/${encodeURIComponent(order.id)}/delivery/confirm-manual`, { method: "POST" });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result?.message || "Xác nhận giao hàng thất bại.");
+      window.location.reload();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Xác nhận giao hàng thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleInternalCancelOrder = async () => {
     if (!order) return;
     if (!canCancelBeforeStockOut(order)) {
@@ -4278,6 +4301,14 @@ export default function OrderDetailPageClient({
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-neutral-100 pt-2">
             <div className="shrink-0 overflow-x-auto py-0.5"><Timeline order={viewOrder} /></div>
             <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
+              {getCarrierCode(viewOrder, meta).includes("VIETTEL") &&
+                viewOrder.shipment?.trackingCode &&
+                !["DELIVERED", "RETURNED", "RETURNING", "CANCELLED", "FAILED"].includes(String(viewOrder.shipment?.shippingStatus || "").toUpperCase()) &&
+                canPackShipOrderPermission ? (
+                  <ActionButton tone="dark" disabled={saving} onClick={handleManualDeliveryConfirmation}>
+                    Xác nhận giao thành công
+                  </ActionButton>
+                ) : null}
               <ActionButton onClick={handlePrint}>In đơn hàng</ActionButton>
               <ActionButton onClick={handleCopyOrder}>
                 Sao chép đơn

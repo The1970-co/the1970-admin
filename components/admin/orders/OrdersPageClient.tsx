@@ -5023,6 +5023,7 @@ export default function OrdersPageClient() {
 
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [bulkReconcilingCod, setBulkReconcilingCod] = useState(false);
+  const [bulkManualDelivering, setBulkManualDelivering] = useState(false);
   const [bulkReconcileResult, setBulkReconcileResult] = useState<any>(null);
   const [savingOrderStatus, setSavingOrderStatus] = useState(false);
   const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
@@ -6926,6 +6927,50 @@ export default function OrdersPageClient() {
     }
 
     setCheckedIds((prev) => Array.from(new Set([...prev, ...allVisibleIds])));
+  };
+
+  const confirmCheckedManualDelivery = async () => {
+    if (!canAdminReconcile || bulkManualDelivering || checkedOrders.length === 0) return;
+    if (checkedOrders.length > 100) { setActionMessage("Chọn tối đa 100 đơn mỗi lần."); return; }
+    setBulkManualDelivering(true);
+    setActionMessage("");
+    let success = 0;
+    const errors: string[] = [];
+    try {
+      for (const order of checkedOrders) {
+        try {
+          const response = await apiFetch(`/shipments/${encodeURIComponent(order.id)}/delivery/confirm-manual`, { method: "POST" });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(Array.isArray(result?.message) ? result.message.join(", ") : result?.message || "Không xác nhận được");
+          success++;
+        } catch (error) {
+          errors.push(`${order.orderCode || order.id}: ${error instanceof Error ? error.message : "Lỗi"}`);
+        }
+      }
+      await loadOrders();
+      setCheckedIds([]);
+      setActionMessage(`Đã xác nhận giao thành công ${success}/${checkedOrders.length} đơn (doanh thu ghi nhận ngày xác nhận; COD chờ đối soát).${errors.length ? ` Lỗi: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? ` và ${errors.length - 5} đơn khác` : ""}` : ""}`);
+    } finally {
+      setBulkManualDelivering(false);
+    }
+  };
+
+  const openManualDeliveryConfirmation = () => {
+    if (!canAdminReconcile || bulkManualDelivering || checkedOrders.length === 0) return;
+    if (checkedOrders.length > 100) {
+      setActionMessage("Chọn tối đa 100 đơn mỗi lần.");
+      return;
+    }
+    setConfirmTitle(`Xác nhận giao thành công ${checkedOrders.length} đơn?`);
+    setConfirmDescription(
+      `Chỉ xác nhận các đơn Viettel Post đã giao thực tế. Doanh thu bán hàng được ghi nhận vào ngày xác nhận; COD vẫn chờ đối soát và KHÔNG được tính là tiền đã thu.`,
+    );
+    setConfirmText("Xác nhận đã giao");
+    setConfirmDanger(false);
+    setConfirmAction(() => async () => {
+      await confirmCheckedManualDelivery();
+    });
+    setConfirmOpen(true);
   };
 
   const reconcileCheckedOrders = async () => {
@@ -9505,6 +9550,14 @@ getPaidRevenueAmount(o)
                       Gửi HVC
                     </button>
                   ) : null}
+
+                  {canAdminReconcile ? <button
+                    type="button"
+                    onClick={openManualDeliveryConfirmation}
+                    disabled={bulkManualDelivering || checkedOrders.length === 0}
+                    title="Xác nhận giao thành công thủ công cho đơn Viettel Post; không ghi nhận thanh toán COD"
+                    className="h-9 rounded-2xl border border-neutral-300 bg-white px-3 text-xs font-semibold text-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
+                  >{bulkManualDelivering ? "Đang xác nhận..." : `Đã giao thủ công (${checkedOrders.length})`}</button> : null}
 
                   {canAdminReconcile ? <button
                     type="button"
