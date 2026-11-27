@@ -157,8 +157,7 @@ export default function StockTransferDetailPageClient({
     (transfer as any)?.confirmedByName ||
     (transfer as any)?.sentByName ||
     (transfer as any)?.senderName ||
-    (transfer as any)?.createdByName ||
-    "—";
+    "Chưa xác nhận gửi";
   const sentAt =
     (transfer as any)?.confirmedAt ||
     (transfer as any)?.sentAt ||
@@ -599,7 +598,15 @@ export default function StockTransferDetailPageClient({
             <p className="mt-1 text-sm font-semibold text-neutral-900">{(transfer as any).sourceRefId || "—"}</p>
           </div>
           <div>
-            <p className="text-xs text-neutral-500">Người gửi</p>
+            <p className="text-xs text-neutral-500">Người lập phiếu</p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900">{(transfer as any).createdByName || "Chưa ghi nhận"}</p>
+          </div>
+          <div>
+            <p className="text-xs text-neutral-500">Ngày lập phiếu</p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900">{formatDateTime((transfer as any).createdAt)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-neutral-500">Người xác nhận gửi</p>
             <p className="mt-1 text-sm font-semibold text-neutral-900">{senderName}</p>
           </div>
           <div>

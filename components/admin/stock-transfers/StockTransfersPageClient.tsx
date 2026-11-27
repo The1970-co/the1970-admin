@@ -1967,6 +1967,17 @@ export default function StockTransfersPageClient() {
     [items],
   );
 
+  function currentTransferCreator() {
+    const user = currentUser || getCurrentUserFromStorage();
+    const name = [user?.staff?.fullName, user?.staffName, user?.fullName,
+      user?.displayName, user?.name, user?.email].map((v) => String(v || "").trim())
+      .find((v) => v && !/^(admin|admin web|administrator|owner|admin system)$/i.test(v));
+    return {
+      createdById: String(user?.staffId || user?.id || user?.userId || user?.sub || ""),
+      createdByName: name || "",
+    };
+  }
+
   async function handleCreateTransfer() {
     if (!canCreateStockTransfer) {
       setError("Bạn không có quyền tạo phiếu chuyển kho.");
@@ -1999,6 +2010,7 @@ export default function StockTransfersPageClient() {
       setNotice(null);
 
       await createStockTransfer({
+        ...currentTransferCreator(),
         fromBranchId,
         toBranchId,
         note: note.trim() || undefined,
@@ -2292,6 +2304,7 @@ export default function StockTransfersPageClient() {
 
       for (const targetBranchId of targetBranchIds) {
         await createStockTransfer({
+          ...currentTransferCreator(),
           fromBranchId: "QO",
           toBranchId: targetBranchId,
           note: `Auto cấp hàng thông minh · ${itemsByBranch[targetBranchId].length} SKU`,
@@ -3738,13 +3751,17 @@ export default function StockTransfersPageClient() {
                 </p>
               </Panel>
               <Panel className="p-3">
-                <p className="text-xs text-neutral-500">Người gửi</p>
+                <p className="text-xs text-neutral-500">Người lập phiếu</p>
+                <p className="mt-1 text-sm font-semibold">{(selectedTransfer as any).createdByName || "Chưa ghi nhận"}</p>
+                <p className="mt-1 text-xs text-neutral-500">{formatShortDateTime((selectedTransfer as any).createdAt)}</p>
+              </Panel>
+              <Panel className="p-3">
+                <p className="text-xs text-neutral-500">Người xác nhận gửi</p>
                 <p className="mt-1 text-sm font-semibold">
                   {(selectedTransfer as any).confirmedByName ||
                     (selectedTransfer as any).sentByName ||
                     (selectedTransfer as any).senderName ||
-                    (selectedTransfer as any).createdByName ||
-                    "—"}
+                    "Chưa xác nhận gửi"}
                 </p>
                 <p className="mt-1 text-xs text-neutral-500">
                   {formatShortDateTime(
