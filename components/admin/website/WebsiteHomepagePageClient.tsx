@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import {
   getHomepageAdmin, publishHomepage, saveHomepageDraft,
   type HomepageBlock, type HomepageBlockType, type HomepageConfig,
@@ -8,6 +8,46 @@ import {
 } from "@/lib/website-homepage-api";
 import { uploadWebsiteImage } from "@/lib/website-products-api";
 import { useAuth } from "@/components/admin/auth/AuthProvider";
+
+
+// Decorative Unicode letters are characters, not CSS fonts.
+function plainCardText(value: string) {
+  return value.replace(/[\u{1D400}-\u{1D7FF}\u2102\u210A-\u2113\u2115\u2119-\u211D\u2124\u2128\u212C-\u212D\u212F-\u2131\u2133-\u2134\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A]/gu, ch => {
+    const normalized = ch.normalize("NFKC");
+    return /^[A-Za-z0-9]$/.test(normalized) ? normalized : ch;
+  });
+}
+function cardCaptionHeight(value: unknown): number {
+  if (value == null || value === "") return 96;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(48, Math.min(200, Math.round(n))) : 96;
+}
+function safeCardFont(value: unknown): string {
+  // Only a local font name, never CSS declarations, URL or markup.
+  const name = String(value ?? "").trim().replace(/^["']|["']$/g, "");
+  return /^[A-Za-z][A-Za-z0-9 ._-]{0,59}$/.test(name) ? name : "";
+}
+
+type CardTextKey = "titleVi" | "titleEn" | "subtitleVi" | "subtitleEn";
+function cardStyle(item: HomepageItem) {
+  return (item as HomepageItem & {style?: Record<string, any>}).style || {};
+}
+function pastedCardFont(html: string): string {
+  if (!html) return "";
+  // Inspect clipboard markup in an inert template; never insert it into the page.
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  for (const element of Array.from(template.content.querySelectorAll<HTMLElement>("[style],font[face]"))) {
+    if (!element.textContent?.trim()) continue;
+    const value = element.style.fontFamily || element.getAttribute("face") || "";
+    const first = safeCardFont(value.split(",")[0]);
+    if (first) return first;
+  }
+  return "";
+}
+function cardFieldValue(item: HomepageItem, key: CardTextKey, isMini: boolean) {
+  return isMini && cardStyle(item).pasteFontMode === "CMS" ? plainCardText(item[key] || "") : item[key] || "";
+}
 
 const TYPES: {value:HomepageBlockType;label:string}[] = [
   {value:"FULL_BLEED_HERO",label:"Hero tràn viền ảnh / video"},
@@ -17,6 +57,19 @@ const TYPES: {value:HomepageBlockType;label:string}[] = [
   {value:"STORY_SPLIT",label:"Hai bài ảnh song song"},
   {value:"PRODUCT_GRID",label:"Lưới sản phẩm"},
 ];
+
+type SlidePlayback = "AUTO" | "MANUAL" | "OFF";
+type SlideItem = HomepageItem & { slidePlayback?: SlidePlayback };
+
+function slidePlaybackOf(item: HomepageItem | null | undefined): SlidePlayback {
+  const mode = (item as SlideItem | null | undefined)?.slidePlayback;
+  return mode === "MANUAL" || mode === "OFF" ? mode : "AUTO";
+}
+
+function slideDelayMs(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.max(1500, Math.min(60000, Math.round(n))) : 5000;
+}
 
 const uid=(p:string)=>`${p}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
 const blankItem=():HomepageItem=>({
@@ -132,6 +185,33 @@ export default function WebsiteHomepagePageClient(){
   const patchItem=(blockId:string,itemId:string,patch:Partial<HomepageItem>)=>setConfig(old=>({
     ...old,blocks:old.blocks.map(b=>b.id===blockId?{...b,items:b.items.map(i=>i.id===itemId?{...i,...patch}:i)}:b)
   }));
+
+  function pasteCardText(event: ClipboardEvent<HTMLInputElement>, blockId: string, item: HomepageItem, key: CardTextKey) {
+    if (!canEdit) return;
+    event.preventDefault();
+    const input = event.currentTarget;
+    const style = cardStyle(item);
+    const locked = style.pasteFontMode === "CMS";
+    const raw = event.clipboardData.getData("text/plain").replace(/[\r\n]+/g, " ");
+    const insert = locked ? plainCardText(raw) : raw;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const next = input.value.slice(0, start) + insert + input.value.slice(end);
+    const fonts = {...(style.pastedCardFonts || {})};
+    const font = locked ? "" : pastedCardFont(event.clipboardData.getData("text/html"));
+    // A single field uses a single family. A plain-text paste replaces the override
+    // only when replacing the whole field; partial text keeps its existing family.
+    if (font) fonts[key] = font;
+    else if (locked || (start === 0 && end === input.value.length)) delete fonts[key];
+    patchItem(blockId, item.id, {[key]:next, style:{...style,pastedCardFonts:fonts}} as Partial<HomepageItem>);
+    requestAnimationFrame(()=>{if(document.activeElement===input)input.setSelectionRange(start+insert.length,start+insert.length);});
+  }
+
+  function applyMiniCaptionHeight(blockId: string, value: number) {
+    if (!canEdit) return;
+    const height = cardCaptionHeight(value);
+    setConfig(old=>({...old,blocks:old.blocks.map(block=>block.id!==blockId?block:{...block,items:block.items.map((item,index)=>index>=2&&index<=5?{...item,style:{...cardStyle(item),captionHeightPx:height}}:item)})}));
+  }
 
   function moveBlock(id:string,dir:-1|1){
     const i=config.blocks.findIndex(b=>b.id===id),to=i+dir;if(i<0||to<0||to>=config.blocks.length)return;
@@ -473,7 +553,7 @@ export default function WebsiteHomepagePageClient(){
               className={`scroll-mt-28 rounded-2xl border bg-white p-5 transition ${selectedItemId===item.id?"border-black ring-2 ring-black/10":"border-neutral-200"}`}
             >
               <div className="mb-4 flex items-center justify-between">
-                <div><div className="text-sm font-semibold">Thẻ {index+1}</div><div className="text-xs text-neutral-400">{item.mediaMode==="slider"?`Slider · ${item.images.length} ảnh`:"1 ảnh"}</div></div>
+                <div><div className="text-sm font-semibold">Thẻ {index+1}</div><div className="text-xs text-neutral-400">{item.images.length} ảnh{(selected.type==="HERO_SPLIT"||selected.type==="FULL_BLEED_HERO")&&item.images.length>1?` · ${slidePlaybackOf(item)==="AUTO"?"Tự động":slidePlaybackOf(item)==="MANUAL"?"Thủ công":"Tắt slide"}`:""}</div></div>
                 <div className="flex gap-1">
                   {canEdit ? <><button onClick={()=>moveItem(selected.id,item.id,-1)} className="rounded border px-2 py-1 text-xs">↑</button><button onClick={()=>moveItem(selected.id,item.id,1)} className="rounded border px-2 py-1 text-xs">↓</button></> : null}
                   {canDelete ? <button onClick={()=>removeItem(selected.id,item.id)} className="rounded px-2 py-1 text-xs text-red-600">Xóa thẻ</button> : null}
@@ -481,10 +561,10 @@ export default function WebsiteHomepagePageClient(){
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="space-y-3">
-                  <Field label="Tiêu đề VI" value={item.titleVi} onChange={v=>patchItem(selected.id,item.id,{titleVi:v})}/>
-                  <Field label="Tiêu đề EN" value={item.titleEn} onChange={v=>patchItem(selected.id,item.id,{titleEn:v})}/>
-                  <Field label="Dòng nhỏ VI" value={item.subtitleVi} onChange={v=>patchItem(selected.id,item.id,{subtitleVi:v})}/>
-                  <Field label="Dòng nhỏ EN" value={item.subtitleEn} onChange={v=>patchItem(selected.id,item.id,{subtitleEn:v})}/>
+                  <Field label="Tiêu đề VI" value={cardFieldValue(item,"titleVi",selected.type==="HERO_SPLIT"&&index>=2&&index<=5)} onChange={v=>patchItem(selected.id,item.id,{titleVi:(selected.type==="HERO_SPLIT"&&index>=2&&index<=5)&&cardStyle(item).pasteFontMode==="CMS"?plainCardText(v):v})} onPaste={(selected.type==="HERO_SPLIT"&&index>=2&&index<=5)?e=>pasteCardText(e,selected.id,item,"titleVi"):undefined} disabled={!canEdit}/>
+                  <Field label="Tiêu đề EN" value={cardFieldValue(item,"titleEn",selected.type==="HERO_SPLIT"&&index>=2&&index<=5)} onChange={v=>patchItem(selected.id,item.id,{titleEn:(selected.type==="HERO_SPLIT"&&index>=2&&index<=5)&&cardStyle(item).pasteFontMode==="CMS"?plainCardText(v):v})} onPaste={(selected.type==="HERO_SPLIT"&&index>=2&&index<=5)?e=>pasteCardText(e,selected.id,item,"titleEn"):undefined} disabled={!canEdit}/>
+                  <Field label="Dòng nhỏ VI" value={cardFieldValue(item,"subtitleVi",selected.type==="HERO_SPLIT"&&index>=2&&index<=5)} onChange={v=>patchItem(selected.id,item.id,{subtitleVi:(selected.type==="HERO_SPLIT"&&index>=2&&index<=5)&&cardStyle(item).pasteFontMode==="CMS"?plainCardText(v):v})} onPaste={(selected.type==="HERO_SPLIT"&&index>=2&&index<=5)?e=>pasteCardText(e,selected.id,item,"subtitleVi"):undefined} disabled={!canEdit}/>
+                  <Field label="Dòng nhỏ EN" value={cardFieldValue(item,"subtitleEn",selected.type==="HERO_SPLIT"&&index>=2&&index<=5)} onChange={v=>patchItem(selected.id,item.id,{subtitleEn:(selected.type==="HERO_SPLIT"&&index>=2&&index<=5)&&cardStyle(item).pasteFontMode==="CMS"?plainCardText(v):v})} onPaste={(selected.type==="HERO_SPLIT"&&index>=2&&index<=5)?e=>pasteCardText(e,selected.id,item,"subtitleEn"):undefined} disabled={!canEdit}/>
                   <Area label="Nội dung VI" value={item.bodyVi} onChange={v=>patchItem(selected.id,item.id,{bodyVi:v})}/>
                   <Area label="Nội dung EN" value={item.bodyEn} onChange={v=>patchItem(selected.id,item.id,{bodyEn:v})}/>
                   <div className="grid gap-3 md:grid-cols-2"><Field label="Nút VI" value={item.ctaVi} onChange={v=>patchItem(selected.id,item.id,{ctaVi:v})}/><Field label="Nút EN" value={item.ctaEn} onChange={v=>patchItem(selected.id,item.id,{ctaEn:v})}/></div>
@@ -543,6 +623,30 @@ export default function WebsiteHomepagePageClient(){
 
                     <div className="mt-5 border-t pt-4">
                       <div className="mb-3 text-sm font-semibold">Chữ & vị trí nội dung</div>
+                      {selected.type==="HERO_SPLIT" && index>=2 && index<=5 ? (
+                        <div className="mb-4 space-y-3 rounded-xl border bg-white p-3">
+                          <label className="block">
+                            <div className="mb-1 text-xs font-semibold text-neutral-500">Font khi dán chữ</div>
+                            <select disabled={!canEdit} value={cardStyle(item).pasteFontMode==="CMS"?"CMS":"KEEP"}
+                              onChange={e=>patchItem(selected.id,item.id,{style:{...cardStyle(item),pasteFontMode:e.target.value}} as Partial<HomepageItem>)}
+                              className="h-11 w-full rounded-xl border px-3 text-sm disabled:opacity-50">
+                              <option value="KEEP">Cho phép font dán đè font cài đặt</option>
+                              <option value="CMS">Khóa font theo cài đặt của thẻ</option>
+                            </select>
+                          </label>
+                          <p className="text-xs leading-5 text-neutral-500">{cardStyle(item).pasteFontMode==="CMS"?"Chữ Unicode cách điệu được hiển thị thành chữ thường (không đổi hoa/thường), dùng font bên dưới. Font HTML từ clipboard bị bỏ qua.":"Giữ ký tự Unicode cách điệu và font nguồn nếu clipboard có thông tin font. Font nguồn cần có trên thiết bị khách; không tự tải font bên ngoài."}</p>
+                          <div className="flex flex-wrap items-end gap-2">
+                            <div className="min-w-[160px] flex-1">
+                              <CaptionHeightField key={item.id} value={cardCaptionHeight(cardStyle(item).captionHeightPx)} disabled={!canEdit}
+                                onChange={height=>patchItem(selected.id,item.id,{style:{...cardStyle(item),captionHeightPx:height}} as Partial<HomepageItem>)}/>
+                            </div>
+                            <button type="button" disabled={!canEdit} onClick={()=>applyMiniCaptionHeight(selected.id,cardCaptionHeight(cardStyle(item).captionHeightPx))}
+                              className="h-11 rounded-xl border border-black px-3 text-xs font-semibold disabled:opacity-40">Áp dụng cho cả 4 thẻ</button>
+                          </div>
+                          <p className="text-xs leading-5 text-neutral-500">Mặc định 96 px. Cùng chiều cao sẽ giúp đường mép ảnh của 4 thẻ cân nhau. Nếu chữ dài, tăng chiều cao nền; chữ vượt khung có thể cuộn đọc.</p>
+                        </div>
+                      ) : null}
+
 
                       <div className="grid gap-3 md:grid-cols-3">
                         <label>
@@ -614,14 +718,14 @@ export default function WebsiteHomepagePageClient(){
                           </select>
                         </label>
 
-                        <Field label="Cỡ dòng nhỏ (px)" value={String((item as any).style?.subtitleFontSizePx ?? 11)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),subtitleFontSizePx:Math.max(8,Math.min(40,Number(v||11)))}} as any)}/>
-                        <Field label="Cỡ tiêu đề (px)" value={String((item as any).style?.titleFontSizePx ?? (index===0?56:24))} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleFontSizePx:Math.max(12,Math.min(120,Number(v||24)))}} as any)}/>
+                        <Field label="Cỡ dòng nhỏ (px)" value={String((item as any).style?.subtitleFontSizePx ?? (selected.type==="HERO_SPLIT"&&index>=2&&index<=5?10:11))} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),subtitleFontSizePx:Math.max(8,Math.min(40,Number(v||11)))}} as any)}/>
+                        <Field label="Cỡ tiêu đề (px)" value={String((item as any).style?.titleFontSizePx ?? (selected.type==="HERO_SPLIT"&&index>=2&&index<=5?20:index===0?56:24))} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleFontSizePx:Math.max(12,Math.min(120,Number(v||24)))}} as any)}/>
                       </div>
 
                       <div className="mt-3 grid gap-3 md:grid-cols-4">
                         <Field label="Cỡ nội dung (px)" value={String((item as any).style?.bodyFontSizePx ?? 15)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),bodyFontSizePx:Math.max(10,Math.min(60,Number(v||15)))}} as any)}/>
-                        <Field label="Độ đậm tiêu đề" value={String((item as any).style?.titleFontWeight ?? 600)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleFontWeight:Math.max(100,Math.min(900,Number(v||600)))}} as any)}/>
-                        <Field label="Line-height tiêu đề" value={String((item as any).style?.titleLineHeight ?? 1.08)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleLineHeight:Math.max(.8,Math.min(2,Number(v||1.08)))}} as any)}/>
+                        <Field label="Độ đậm tiêu đề" value={String((item as any).style?.titleFontWeight ?? (selected.type==="HERO_SPLIT"&&index>=2&&index<=5?300:600))} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleFontWeight:Math.max(100,Math.min(900,Number(v||600)))}} as any)}/>
+                        <Field label="Line-height tiêu đề" value={String((item as any).style?.titleLineHeight ?? (selected.type==="HERO_SPLIT"&&index>=2&&index<=5?1.05:1.08))} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),titleLineHeight:Math.max(.8,Math.min(2,Number(v||1.08)))}} as any)}/>
                         <Field label="Độ rộng khối chữ (px)" value={String((item as any).style?.textMaxWidthPx ?? 500)} onChange={v=>patchItem(selected.id,item.id,{style:{...((item as any).style||{}),textMaxWidthPx:Math.max(120,Math.min(1400,Number(v||500)))}} as any)}/>
                       </div>
 
@@ -655,14 +759,42 @@ export default function WebsiteHomepagePageClient(){
                     ):null}
                   </>:null}
 
-                  {(selected.type!=="FULL_BLEED_HERO" || (item.mediaType||"image")==="image")?<div className="grid gap-3 md:grid-cols-2">
+                  {(selected.type!=="FULL_BLEED_HERO" || (item.mediaType||"image")==="image")?(
+                    selected.type==="HERO_SPLIT" || selected.type==="FULL_BLEED_HERO" ? (
+                      <div className="rounded-xl border bg-neutral-50 p-3">
+                        <div className="mb-3 text-sm font-semibold">Chuyển ảnh slideshow</div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label>
+                            <div className="mb-1 text-xs font-semibold text-neutral-500">Chế độ chuyển ảnh</div>
+                            <select disabled={!canEdit} value={slidePlaybackOf(item)}
+                              onChange={e=>{
+                                const mode=e.target.value as SlidePlayback;
+                                const patch: Partial<SlideItem>={slidePlayback:mode,mediaMode:mode==="OFF"?"single":"slider"};
+                                patchItem(selected.id,item.id,patch);
+                              }} className="h-11 w-full rounded-xl border bg-white px-3 text-sm disabled:opacity-60">
+                              <option value="AUTO">Tự động + bấm thủ công</option>
+                              <option value="MANUAL">Chỉ bấm thủ công</option>
+                              <option value="OFF">Tắt slideshow — chỉ ảnh đầu</option>
+                            </select>
+                          </label>
+                          <SlideDelayField key={item.id} value={slideDelayMs(item.autoplayMs)}
+                            disabled={!canEdit||slidePlaybackOf(item)!=="AUTO"}
+                            onChange={ms=>patchItem(selected.id,item.id,{autoplayMs:ms})}/>
+                        </div>
+                        <div className="mt-2 text-xs leading-5 text-neutral-500">
+                          {slidePlaybackOf(item)==="AUTO"?"Ảnh tự chuyển theo thời gian; vẫn có thể bấm ảnh hoặc dấu chấm.":slidePlaybackOf(item)==="MANUAL"?"Không tự chuyển. Bấm ảnh hoặc dấu chấm để đổi ảnh.":"Chỉ hiện ảnh đầu tiên, không tự chuyển và không hiện dấu chấm. Các ảnh khác vẫn được lưu."}
+                          {item.images.length<2?" Thêm ít nhất 2 ảnh để chạy slideshow.":""}
+                        </div>
+                      </div>
+                    ) : <div className="grid gap-3 md:grid-cols-2">
                     <label><div className="mb-1 text-xs font-semibold text-neutral-500">Kiểu ảnh</div>
                       <select disabled={!canEdit} value={item.mediaMode} onChange={e=>patchItem(selected.id,item.id,{mediaMode:e.target.value as "single"|"slider"})} className="h-11 w-full rounded-xl border px-3 text-sm">
                         <option value="single">1 ảnh</option><option value="slider">Slider nhiều ảnh</option>
                       </select>
                     </label>
                     <Field label="Đổi ảnh mỗi (ms)" value={String(item.autoplayMs)} onChange={v=>patchItem(selected.id,item.id,{autoplayMs:Math.max(1500,Number(v||5000))})}/>
-                  </div>:null}
+                  </div>
+                  ):null}
                 </div>
                 <div>
                   {selected.type==="FULL_BLEED_HERO" && (item.mediaType||"image")==="video" ? (
@@ -672,7 +804,7 @@ export default function WebsiteHomepagePageClient(){
                   ) : (
                     <label className="flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed bg-neutral-50 px-4 py-7 text-center">
                       <input type="file" accept="image/*" multiple className="hidden" onChange={e=>void upload(selected.id,item,e.target.files)}/>
-                      <div><div className="text-sm font-semibold">+ Upload ảnh</div><div className="mt-1 text-xs text-neutral-400">Nếu có từ 2 ảnh trở lên, ngoài website sẽ tự chạy slideshow.</div></div>
+                      <div><div className="text-sm font-semibold">+ Upload ảnh</div><div className="mt-1 text-xs text-neutral-400">{selected.type==="HERO_SPLIT"||selected.type==="FULL_BLEED_HERO"?"Từ 2 ảnh: slideshow theo chế độ chuyển ảnh đã chọn.":"Có thể tải nhiều ảnh cho thẻ này."}</div></div>
                     </label>
                   )}
                   <div className="mt-3 grid grid-cols-2 gap-3">{item.images.map((img,i)=><div key={img.id} className="overflow-hidden rounded-xl border">
@@ -694,9 +826,37 @@ export default function WebsiteHomepagePageClient(){
   </div>
 }
 
-function Field({label,value,onChange,placeholder=""}:{label:string;value:string;onChange:(v:string)=>void;placeholder?:string}){
-  return <label><div className="mb-1 text-xs font-semibold text-neutral-500">{label}</div><input value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"/></label>
+function Field({label,value,onChange,placeholder="",onPaste,disabled=false}:{label:string;value:string;onChange:(v:string)=>void;placeholder?:string;onPaste?:(event:ClipboardEvent<HTMLInputElement>)=>void;disabled?:boolean}){
+  return <label><div className="mb-1 text-xs font-semibold text-neutral-500">{label}</div><input value={value} placeholder={placeholder} disabled={disabled} onPaste={onPaste} onChange={e=>onChange(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm disabled:opacity-60"/></label>
+}
+function CaptionHeightField({value,disabled,onChange}:{value:number;disabled:boolean;onChange:(value:number)=>void}) {
+  const [draft,setDraft]=useState(String(value));
+  useEffect(()=>setDraft(String(value)),[value]);
+  return <label className="block"><div className="mb-1 text-xs font-semibold text-neutral-500">Chiều cao nền chữ (px)</div>
+    <input type="number" min={48} max={200} step={1} value={draft} disabled={disabled} className="h-11 w-full rounded-xl border px-3 text-sm disabled:opacity-50"
+      onChange={e=>{const v=e.target.value;setDraft(v);const n=Number(v);if(v.trim()&&Number.isFinite(n)&&n>=48&&n<=200)onChange(cardCaptionHeight(n));}}
+      onBlur={()=>{const next=draft.trim()?cardCaptionHeight(draft):value;setDraft(String(next));onChange(next);}}/>
+  </label>;
 }
 function Area({label,value,onChange}:{label:string;value:string;onChange:(v:string)=>void}){
   return <label><div className="mb-1 text-xs font-semibold text-neutral-500">{label}</div><textarea value={value} onChange={e=>onChange(e.target.value)} rows={4} className="w-full rounded-xl border px-3 py-2 text-sm"/></label>
+}
+
+function SlideDelayField({value,disabled,onChange}:{value:number;disabled:boolean;onChange:(ms:number)=>void}) {
+  const [draft,setDraft]=useState(String(value/1000));
+  useEffect(()=>{setDraft(String(value/1000));},[value]);
+  return <label>
+    <div className="mb-1 text-xs font-semibold text-neutral-500">Đổi ảnh mỗi (giây)</div>
+    <input type="number" min={1.5} max={60} step="any" value={draft} disabled={disabled}
+      onChange={e=>{
+        const v=e.target.value;setDraft(v);
+        const seconds=Number(v);
+        if(v.trim()&&Number.isFinite(seconds)&&seconds>=1.5&&seconds<=60)onChange(slideDelayMs(seconds*1000));
+      }}
+      onBlur={()=>{
+        const ms=draft.trim()?slideDelayMs(Number(draft)*1000):value;
+        setDraft(String(ms/1000));if(ms!==value)onChange(ms);
+      }} className="h-11 w-full rounded-xl border bg-white px-3 text-sm disabled:bg-neutral-100 disabled:opacity-60"/>
+    <div className="mt-1 text-[11px] text-neutral-500">1,5–60 giây</div>
+  </label>;
 }
