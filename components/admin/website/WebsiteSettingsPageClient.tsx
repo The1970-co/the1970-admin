@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getWebsiteSettings,
   saveWebsiteSettings,
@@ -25,6 +25,7 @@ const DEFAULT_NAV_SETTINGS: WebsiteNavigationSettings = {
   announcementEnabled: true,
   announcementTextVi: "THE 1970 — EST. 2015",
   announcementLink: "",
+  siteBackgroundColor: "#F4EFE7",
 };
 
 const DEFAULT_SETTINGS: WebsiteSettings = {
@@ -39,6 +40,16 @@ const DEFAULT_SETTINGS: WebsiteSettings = {
   zaloUrl: "",
   defaultBranchId: "",
 };
+
+const DEFAULT_SITE_BACKGROUND = "#F4EFE7";
+function validBackground(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+function previewForeground(hex: string) {
+  const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const linear = rgb.map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
+  return .2126 * linear[0] + .7152 * linear[1] + .0722 * linear[2] > .179 ? "#1D1C19" : "#FFFFFF";
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -59,6 +70,39 @@ export default function WebsiteSettingsPageClient() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [themePreviewUrl, setThemePreviewUrl] = useState("");
+  const previewRef = useRef<HTMLIFrameElement>(null);
+  const colorInput = navSettings.siteBackgroundColor ?? DEFAULT_SITE_BACKGROUND;
+  const themeColor = validBackground(colorInput) ? colorInput : DEFAULT_SITE_BACKGROUND;
+  const themeText = previewForeground(themeColor);
+
+  function sendThemePreview() {
+    if (!themePreviewUrl) return;
+    previewRef.current?.contentWindow?.postMessage(
+      { type: "THE1970_THEME_PREVIEW", color: themeColor },
+      new URL(themePreviewUrl).origin,
+    );
+  }
+
+  useEffect(() => {
+    if (!themePreviewUrl) return;
+    sendThemePreview();
+    const onReady = (event: MessageEvent) => {
+      if (event.source !== previewRef.current?.contentWindow ||
+          event.origin !== new URL(themePreviewUrl).origin ||
+          event.data?.type !== "THE1970_THEME_PREVIEW_READY") return;
+      sendThemePreview();
+    };
+    window.addEventListener("message", onReady);
+    return () => window.removeEventListener("message", onReady);
+  }, [themeColor, themePreviewUrl]);
+
+  function openThemePreview() {
+    const local = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    setThemePreviewUrl(local
+      ? `${window.location.protocol}//${window.location.hostname}:3002/?themePreview=1`
+      : "https://web.the1970.co/?themePreview=1");
+  }
 
   useEffect(() => {
     void load();
@@ -107,7 +151,11 @@ export default function WebsiteSettingsPageClient() {
   }
 
   async function save() {
-    if (!navigation) return;
+    if (!navigation || !canEdit) return;
+    if (!validBackground(colorInput)) {
+      setError("Mã màu nền phải có dạng #RRGGBB, ví dụ #F4EFE7.");
+      return;
+    }
 
     try {
       setSaving(true);
@@ -139,6 +187,7 @@ export default function WebsiteSettingsPageClient() {
         version: Math.max(2, Number(navigation.version || 2)),
         settings: {
           ...navSettings,
+          siteBackgroundColor: colorInput.toUpperCase(),
           menuFontSize: clamp(
             Number(navSettings.menuFontSize || 12),
             10,
@@ -228,6 +277,41 @@ export default function WebsiteSettingsPageClient() {
             Đã lưu cài đặt.
           </div>
         ) : null}
+
+        <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+          <h2 className="text-lg font-semibold">Màu nền chung website</h2>
+          <p className="mt-1 text-sm text-neutral-500">
+            Một màu cho header, menu xổ xuống, menu mobile, nền chữ các thẻ và nền trang. Không đổi màu ảnh hay banner phủ ảnh.
+          </p>
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Chọn màu</span>
+              <input type="color" disabled={!canEdit} value={themeColor}
+                onChange={(e) => setNavSettings((old) => ({ ...old, siteBackgroundColor: e.target.value.toUpperCase() }))}
+                className="h-11 w-20 cursor-pointer rounded-xl border border-neutral-300 p-1" />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Mã HEX</span>
+              <input type="text" disabled={!canEdit} value={colorInput} maxLength={7}
+                aria-invalid={!validBackground(colorInput)}
+                onChange={(e) => setNavSettings((old) => ({ ...old, siteBackgroundColor: e.target.value }))}
+                className="h-11 w-36 rounded-xl border border-neutral-300 px-3 font-mono" />
+            </label>
+            <button type="button" disabled={!canEdit}
+              onClick={() => setNavSettings((old) => ({ ...old, siteBackgroundColor: DEFAULT_SITE_BACKGROUND }))}
+              className="h-11 rounded-xl border px-4 text-sm">Khôi phục màu mặc định</button>
+            <button type="button" onClick={() => themePreviewUrl ? setThemePreviewUrl("") : openThemePreview()}
+              className="h-11 rounded-xl border border-black px-4 text-sm font-medium">{themePreviewUrl ? "Đóng xem trước" : "Xem trước trực tiếp"}</button>
+          </div>
+          <div className="mt-2 text-xs text-neutral-500">Mặc định: #F4EFE7 · {canPublish ? "Bấm Lưu cài đặt để áp dụng trên website." : "Thay đổi sẽ lưu nháp, cần người có quyền xuất bản."}</div>
+          {!validBackground(colorInput) && <p className="mt-2 text-xs text-red-600">Nhập mã màu #RRGGBB hợp lệ.</p>}
+          <div className="mt-4 overflow-hidden rounded-xl border text-sm" style={{ backgroundColor: themeColor, color: themeText }}>
+            <div className="flex items-center justify-between border-b border-current/10 px-5 py-3"><strong className="tracking-[.2em]">THE 1970</strong><span>ÁO PHÔNG &nbsp; SƠ MI &nbsp; QUẦN &nbsp; ÁO KHOÁC</span></div>
+            <div className="grid grid-cols-2 gap-3 px-5 py-4"><div><strong>Menu xổ xuống</strong><p className="mt-2 opacity-70">Xem tất cả sản phẩm</p></div><div className="grid grid-cols-2 gap-2">{["DARK BROWN", "HERITAGE SAGE"].map((label, index) => <div key={label}><div className="h-14" style={{backgroundColor:index ? "#8A8069" : "#5B4435"}} /><div className="py-2 text-xs">{label}</div></div>)}</div></div>
+          </div>
+          {themePreviewUrl && <iframe ref={previewRef} onLoad={sendThemePreview} src={themePreviewUrl}
+            title="Xem trước màu nền website" className="mt-4 h-[650px] w-full rounded-xl border bg-white" />}
+        </section>
 
         <section className="rounded-2xl border border-neutral-200 bg-white p-5">
           <h2 className="text-lg font-semibold">

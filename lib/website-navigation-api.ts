@@ -34,6 +34,9 @@ export type WebsiteNavigationSettings = {
   announcementEnabled: boolean;
   announcementTextVi: string;
   announcementLink: string;
+  siteBackgroundColor?: string;
+
+  // Logo header - optional để backward-compatible với các màn cũ.
   headerLogoUrl?: string;
   headerLogoWidth?: number;
   headerLogoAlign?: "LEFT" | "CENTER" | "RIGHT";
@@ -61,6 +64,7 @@ export type WebsiteNavigationConfig = {
 
 function token() {
   if (typeof window === "undefined") return "";
+
   return (
     localStorage.getItem("token") ||
     localStorage.getItem("accessToken") ||
@@ -71,6 +75,7 @@ function token() {
 
 async function request(path: string, init?: RequestInit) {
   const t = token();
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
@@ -92,22 +97,29 @@ async function request(path: string, init?: RequestInit) {
 }
 
 export function getWebsiteNavigation(market = "VN") {
-  return request(`/website/navigation?market=${encodeURIComponent(market)}`);
+  return request(
+    `/website/navigation?market=${encodeURIComponent(market)}`,
+  );
 }
 
 export function saveWebsiteNavigation(
   config: WebsiteNavigationConfig,
   market = "VN",
 ) {
-  return request(`/website/navigation?market=${encodeURIComponent(market)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ config }),
-  });
+  return request(
+    `/website/navigation?market=${encodeURIComponent(market)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ config }),
+    },
+  );
 }
 
 export function publishWebsiteNavigation(market = "VN") {
   return request(
     `/website/navigation/publish?market=${encodeURIComponent(market)}`,
-    { method: "POST" },
+    {
+      method: "POST",
+    },
   );
 }
