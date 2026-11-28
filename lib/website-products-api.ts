@@ -41,6 +41,7 @@ export type WebsiteImageDraft = {
 
 export type WebsiteProductPayload = {
   productId: string;
+  colorKey?: string;
   slug: string;
   status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
   marketVn: boolean;

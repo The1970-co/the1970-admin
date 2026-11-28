@@ -27,7 +27,8 @@ type MasterProduct = {
   variants?: Array<{
     id?: string;
     sku?: string;
-    color?: string;
+    color?: string | null;
+    status?: string;
     size?: string;
     price?: number | string;
     inventoryItems?: Array<{
@@ -40,6 +41,8 @@ type MasterProduct = {
 type WebsiteRow = {
   id: string;
   productId: string;
+  colorKey?: string;
+  publishedAt?: string | null;
   slug: string;
   status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
   marketVn?: boolean;
@@ -63,6 +66,9 @@ type FormState = {
   id?: string;
   productId: string;
   master?: MasterProduct;
+  colorKey: string;
+  slugManual: boolean;
+  slugLocked: boolean;
   titleVi: string;
   slug: string;
   shortDescriptionVi: string;
@@ -77,6 +83,9 @@ type FormState = {
 
 const emptyForm = (): FormState => ({
   productId: "",
+  colorKey: "",
+  slugManual: false,
+  slugLocked: false,
   titleVi: "",
   slug: "",
   shortDescriptionVi: "",
@@ -111,6 +120,36 @@ function slugify(input: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function variantColorKey(color: unknown) {
+  return `color:${String(color ?? "").trim().normalize("NFC").toLowerCase()}`;
+}
+
+function masterColors(p?: MasterProduct) {
+  const colors = new Map<string, string>();
+  for (const v of p?.variants || []) {
+    if (v.status && v.status !== "ACTIVE") continue;
+    const key = variantColorKey(v.color);
+    if (!colors.has(key)) colors.set(key, String(v.color ?? "").trim());
+  }
+  return [...colors].map(([key, label]) => ({ key, label }));
+}
+
+function colorLabel(p: MasterProduct | undefined, key: string) {
+  if (!key) return "";
+  return masterColors(p).find(c => c.key === key)?.label || key.slice(6) || "";
+}
+
+function automaticSlug(form: Pick<FormState, "titleVi" | "master" | "colorKey">) {
+  const base = slugify(form.titleVi) || slugify(form.master?.name || form.master?.slug || "");
+  const color = slugify(colorLabel(form.master, form.colorKey));
+  return color && base !== color && !base.endsWith(`-${color}`)
+    ? [base, color].filter(Boolean).join("-") : base;
+}
+
+function displayedVariants(p?: MasterProduct, key = "") {
+  return (p?.variants || []).filter(v => (!v.status || v.status === "ACTIVE") && (!key || variantColorKey(v.color) === key));
+}
+
 function money(value: unknown) {
   const n = Number(value || 0);
   return Number.isFinite(n)
@@ -126,8 +165,8 @@ function masterCategory(p?: MasterProduct) {
   return p?.categoryRel?.name || p?.category || "Chưa có danh mục";
 }
 
-function masterPrice(p?: MasterProduct) {
-  const prices = (p?.variants || [])
+function masterPrice(p?: MasterProduct, key = "") {
+  const prices = displayedVariants(p, key)
     .map((v) => Number(v.price || 0))
     .filter((x) => Number.isFinite(x) && x > 0);
   if (!prices.length) return "Chưa có giá";
@@ -136,8 +175,8 @@ function masterPrice(p?: MasterProduct) {
   return min === max ? money(min) : `${money(min)} – ${money(max)}`;
 }
 
-function masterStockState(p?: MasterProduct) {
-  const variants = p?.variants || [];
+function masterStockState(p?: MasterProduct, key = "") {
+  const variants = displayedVariants(p, key);
   if (!variants.length) return "Chưa có biến thể";
   let available = 0;
   for (const v of variants) {
@@ -295,23 +334,24 @@ export default function WebsiteProductsPageClient() {
   }, [query]);
 
   useEffect(() => {
-    if (!editorOpen || form.id || masterQuery.trim().length < 2) {
+    if (!editorOpen || form.id || masterQuery.trim().length < 2 || (form.master && masterQuery === websiteTitleFromMaster(form.master.name || ""))) {
       setMasterResults([]);
       return;
     }
+    let active = true;
     const t = setTimeout(async () => {
       try {
         setSearchingMaster(true);
         const result = await searchMasterProducts(masterQuery.trim());
-        setMasterResults(Array.isArray(result) ? result : []);
+        if (active) setMasterResults(Array.isArray(result) ? result : []);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Không tìm được sản phẩm nội bộ.");
+        if (active) setError(e instanceof Error ? e.message : "Không tìm được sản phẩm nội bộ.");
       } finally {
-        setSearchingMaster(false);
+        if (active) setSearchingMaster(false);
       }
     }, 300);
-    return () => clearTimeout(t);
-  }, [masterQuery, editorOpen, form.id]);
+    return () => { active = false; clearTimeout(t); setSearchingMaster(false); };
+  }, [masterQuery, editorOpen, form.id, form.master]);
 
   function openCreate() {
     setError("");
@@ -332,6 +372,9 @@ export default function WebsiteProductsPageClient() {
       id: row.id,
       productId: row.productId,
       master: row.product,
+      colorKey: row.colorKey || "",
+      slugManual: !!row.slug,
+      slugLocked: !!row.slug && (!!row.publishedAt || row.status === "PUBLISHED"),
       titleVi: row.titleVi || websiteTitleFromMaster(row.product?.name || ""),
       slug: row.slug || "",
       shortDescriptionVi: row.shortDescriptionVi || "",
@@ -350,15 +393,25 @@ export default function WebsiteProductsPageClient() {
 
   function chooseMaster(p: MasterProduct) {
     const title = websiteTitleFromMaster(p.name || "");
-    setForm((old) => ({
-      ...old,
-      productId: p.id,
-      master: p,
-      titleVi: old.titleVi || title,
-      slug: old.slug || slugify(title || p.slug || ""),
-    }));
+    const colors = masterColors(p);
+    setForm((old) => {
+      const changed = old.productId !== p.id;
+      const next = { ...old, productId: p.id, master: p,
+        titleVi: changed ? title : old.titleVi || title,
+        colorKey: changed ? (colors.length === 1 ? colors[0].key : "") : old.colorKey,
+        slugManual: changed ? false : old.slugManual,
+      };
+      return { ...next, slug: next.slugManual ? next.slug : automaticSlug(next) };
+    });
     setMasterQuery(title);
     setMasterResults([]);
+  }
+
+  function chooseColor(key: string) {
+    setForm(old => {
+      const next = { ...old, colorKey: key };
+      return { ...next, slug: next.slugLocked || next.slugManual ? next.slug : automaticSlug(next) };
+    });
   }
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -425,7 +478,8 @@ export default function WebsiteProductsPageClient() {
   const payload = useMemo<WebsiteProductPayload>(
     () => ({
       productId: form.productId,
-      slug: form.slug.trim(),
+      colorKey: form.colorKey,
+      slug: form.slugLocked ? form.slug : slugify(form.slug) || automaticSlug(form),
       status: form.status,
       marketVn: true,
       marketInternational: false,
@@ -449,7 +503,8 @@ export default function WebsiteProductsPageClient() {
     const body = { ...payload, status: status || form.status };
     if (!body.productId) return setError("Chưa chọn sản phẩm nội bộ.");
     if (!body.titleVi) return setError("Chưa nhập tên sản phẩm trên website.");
-    if (!body.slug) return setError("Slug đang trống.");
+    if (!form.id && !body.colorKey) return setError("Chưa chọn màu cho bài đăng.");
+    // Backend also generates a nonempty unique slug if the title cannot be transliterated.
     if (!body.images.length) return setError("Phải upload ít nhất 1 ảnh cho website.");
     if (!body.coverImageUrl) return setError("Chưa chọn ảnh đại diện.");
 
@@ -666,8 +721,9 @@ export default function WebsiteProductsPageClient() {
                                         {row.titleVi || row.product?.name || "Chưa có tên"}
                                       </div>
                                       <div className="mt-0.5 truncate text-[11px] text-zinc-400">
-                                        {masterCategory(row.product)}
+                                        {masterCategory(row.product)} · {row.colorKey ? colorLabel(row.product, row.colorKey) || "Không phân màu" : "Tất cả màu (bài cũ)"}
                                       </div>
+                                      <div className="mt-0.5 truncate text-[11px] text-zinc-500" title={`/products/${row.slug}`}>/products/{row.slug}</div>
                                     </div>
                                     {row.status === "PUBLISHED" ? (
                                       <Badge tone="green">Đăng</Badge>
@@ -680,7 +736,7 @@ export default function WebsiteProductsPageClient() {
 
                                   <div className="mt-2 flex items-center justify-between gap-2">
                                     <div className="truncate text-xs font-medium text-zinc-700">
-                                      {masterPrice(row.product)}
+                                      {masterPrice(row.product, row.colorKey)}
                                     </div>
                                     {row.featured ? (
                                       <span className="text-[11px] text-zinc-500">★ Nổi bật</span>
@@ -792,12 +848,28 @@ export default function WebsiteProductsPageClient() {
                       </div>
                       <div className="rounded-xl bg-zinc-50 p-3">
                         <div className="text-xs text-zinc-500">Giá bán</div>
-                        <div className="mt-1 text-sm font-medium">{masterPrice(form.master)}</div>
+                        <div className="mt-1 text-sm font-medium">{masterPrice(form.master, form.colorKey)}</div>
                       </div>
                       <div className="rounded-xl bg-zinc-50 p-3">
                         <div className="text-xs text-zinc-500">Tình trạng</div>
-                        <div className="mt-1 text-sm font-medium">{masterStockState(form.master)}</div>
+                        <div className="mt-1 text-sm font-medium">{masterStockState(form.master, form.colorKey)}</div>
                       </div>
+                    </div>
+                  ) : null}
+                  {form.master ? (
+                    <div className="mt-4 space-y-2">
+                      <label className="block text-sm font-medium text-zinc-800">Màu của bài đăng</label>
+                      <select value={form.colorKey} onChange={e => chooseColor(e.target.value)} disabled={saving}
+                        className="h-12 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm">
+                        <option value="" disabled={!!form.colorKey || !form.id}>{form.id && !form.colorKey ? "Tất cả màu (bài cũ)" : "Chọn một màu"}</option>
+                        {form.colorKey && !masterColors(form.master).some(c => c.key === form.colorKey) ? <option value={form.colorKey}>{colorLabel(form.master, form.colorKey) || "Không phân màu"} (không còn biến thể hoạt động)</option> : null}
+                        {masterColors(form.master).map(c => {
+                          const posted = rows.some(row => row.productId === form.productId && row.colorKey === c.key && row.id !== form.id);
+                          return <option key={c.key} value={c.key} disabled={posted && c.key !== form.colorKey}>{c.label || "Không phân màu"}{posted ? " — Đã có bài" : ""}</option>;
+                        })}
+                      </select>
+                      <p className="text-xs text-zinc-500">Mỗi màu một bài riêng, chỉ lấy giá, size và tồn kho của màu đã chọn. Bài cũ có thể giữ tất cả màu hoặc chuyển sang một màu.</p>
+                      {!masterColors(form.master).length ? <p className="text-xs text-amber-700">Không tìm thấy biến thể đang hoạt động trong dữ liệu sản phẩm nội bộ.</p> : null}
                     </div>
                   ) : null}
                 </section>
@@ -893,11 +965,10 @@ export default function WebsiteProductsPageClient() {
                         value={form.titleVi}
                         onChange={(e) => {
                           const title = e.target.value;
-                          setForm((old) => ({
-                            ...old,
-                            titleVi: title,
-                            slug: old.slug ? old.slug : slugify(title),
-                          }));
+                          setForm((old) => {
+                            const next = { ...old, titleVi: title };
+                            return { ...next, slug: old.slugLocked || old.slugManual ? old.slug : automaticSlug(next) };
+                          });
                         }}
                         placeholder="Ví dụ: Vintage Flannel Shirt"
                         className="h-12 w-full rounded-xl border border-zinc-200 px-4 text-sm outline-none focus:border-zinc-500"
@@ -910,9 +981,19 @@ export default function WebsiteProductsPageClient() {
                         <span className="flex items-center bg-zinc-50 px-3 text-sm text-zinc-400">/products/</span>
                         <input
                           value={form.slug}
-                          onChange={(e) => setField("slug", slugify(e.target.value))}
-                          className="min-w-0 flex-1 px-3 text-sm outline-none"
+                          readOnly={form.slugLocked}
+                          onChange={(e) => {
+                            const slug = e.target.value;
+                            setForm(old => ({ ...old, slug, slugManual: true }));
+                          }}
+                          onBlur={() => setForm(old => ({ ...old, slug: old.slugLocked ? old.slug : slugify(old.slug) || automaticSlug(old) }))}
+                          placeholder="Tự động tạo từ tên và màu"
+                          className="min-w-0 flex-1 px-3 text-sm outline-none read-only:bg-zinc-50"
                         />
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-500">
+                        <span>{form.slugLocked ? "Giữ nguyên link đã xuất bản." : "Tự tạo từ tên và màu. Nếu trùng, hệ thống tự thêm hậu tố."}</span>
+                        {!form.slugLocked ? <button type="button" className="underline" onClick={() => setForm(old => ({ ...old, slugManual: false, slug: automaticSlug(old) }))}>Tạo lại tự động</button> : null}
                       </div>
                     </label>
 
@@ -999,7 +1080,7 @@ export default function WebsiteProductsPageClient() {
                       </div>
                       <div className="p-4">
                         <div className="font-medium text-zinc-950">{form.titleVi || "Tên sản phẩm"}</div>
-                        <div className="mt-2 text-sm font-medium text-zinc-950">{masterPrice(form.master)}</div>
+                        <div className="mt-2 text-sm font-medium text-zinc-950">{masterPrice(form.master, form.colorKey)}</div>
                         <div className="mt-2 text-xs text-zinc-500">{masterCategory(form.master)}</div>
                       </div>
                     </div>
