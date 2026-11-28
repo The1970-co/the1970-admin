@@ -13,6 +13,7 @@ import {
   type WebsiteNavigationConfig,
   type WebsiteNavigationSettings,
 } from "@/lib/website-navigation-api";
+import { uploadWebsiteImage } from "@/lib/website-products-api";
 import { useAuth } from "@/components/admin/auth/AuthProvider";
 
 const DEFAULT_NAV_SETTINGS: WebsiteNavigationSettings = {
@@ -26,6 +27,9 @@ const DEFAULT_NAV_SETTINGS: WebsiteNavigationSettings = {
   announcementTextVi: "THE 1970 — EST. 2015",
   announcementLink: "",
   siteBackgroundColor: "#F4EFE7",
+  headerLogoUrl: "",
+  headerLogoWidth: 118,
+  headerLogoAlign: "LEFT",
 };
 
 const DEFAULT_SETTINGS: WebsiteSettings = {
@@ -59,6 +63,7 @@ export default function WebsiteSettingsPageClient() {
   const { can } = useAuth();
   const canEdit = can("website.edit");
   const canPublish = can("website.publish");
+  const canUpload = can("website.image.upload");
 
   const [form, setForm] =
     useState<WebsiteSettings>(DEFAULT_SETTINGS);
@@ -68,6 +73,7 @@ export default function WebsiteSettingsPageClient() {
     useState<WebsiteNavigationSettings>(DEFAULT_NAV_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [themePreviewUrl, setThemePreviewUrl] = useState("");
@@ -150,8 +156,28 @@ export default function WebsiteSettingsPageClient() {
     }
   }
 
+  function patchSettings(patch: Partial<WebsiteNavigationSettings>) {
+    if (!canEdit) return;
+    setNavSettings((old) => ({ ...old, ...patch }));
+    setSaved(false);
+  }
+
+  async function uploadHeaderLogo(file: File | undefined) {
+    if (!file || !canUpload || !canEdit || saving || uploadingLogo) return;
+    try {
+      setUploadingLogo(true);
+      setError("");
+      const url = await uploadWebsiteImage(file);
+      patchSettings({ headerLogoUrl: url });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload logo header thất bại.");
+    } finally {
+      setUploadingLogo(false);
+    }
+  }
+
   async function save() {
-    if (!navigation || !canEdit) return;
+    if (!navigation || !canEdit || uploadingLogo || saving) return;
     if (!validBackground(colorInput)) {
       setError("Mã màu nền phải có dạng #RRGGBB, ví dụ #F4EFE7.");
       return;
@@ -182,10 +208,14 @@ export default function WebsiteSettingsPageClient() {
         "VN",
       );
 
+      // Settings and menu are edited in separate screens. Keep the latest menu draft.
+      const latestRow = await getWebsiteNavigation("VN");
+      const latestNavigation = (latestRow?.draftConfig || latestRow?.publishedConfig || navigation) as WebsiteNavigationConfig;
       const nextNavigation: WebsiteNavigationConfig = {
-        ...navigation,
-        version: Math.max(2, Number(navigation.version || 2)),
+        ...latestNavigation,
+        version: Math.max(2, Number(latestNavigation.version || 2)),
         settings: {
+          ...latestNavigation.settings,
           ...navSettings,
           siteBackgroundColor: colorInput.toUpperCase(),
           menuFontSize: clamp(
@@ -258,7 +288,7 @@ export default function WebsiteSettingsPageClient() {
           {canEdit ? (
             <button
               onClick={() => void save()}
-              disabled={saving}
+              disabled={saving || uploadingLogo}
               className="rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
             >
               {saving ? "Đang lưu..." : "Lưu cài đặt"}
@@ -277,6 +307,135 @@ export default function WebsiteSettingsPageClient() {
             Đã lưu cài đặt.
           </div>
         ) : null}
+
+        <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold">Logo thanh menu</h2>
+            <p className="mt-1 text-sm text-neutral-500">
+              Logo chung cho tất cả menu và trang. Chọn ảnh, kích thước, căn lề rồi bấm Lưu cài đặt.
+            </p>
+          </div>
+
+          <div className="grid gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
+            <div className="flex min-h-[120px] items-center justify-center rounded-xl border bg-neutral-50 p-4">
+              {navSettings.headerLogoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={navSettings.headerLogoUrl}
+                  src={navSettings.headerLogoUrl}
+                  alt="The 1970"
+                  style={{
+                    width: `${Math.max(
+                      40,
+                      Math.min(
+                        420,
+                        Number(navSettings.headerLogoWidth || 118),
+                      ),
+                    )}px`,
+                    maxHeight: "72px",
+                    objectFit: "contain",
+                  }}
+                />
+              ) : (
+                <div className="font-serif text-xl font-semibold tracking-[.12em]">
+                  THE 1970
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              {canUpload && canEdit ? (
+                <label className="block cursor-pointer rounded-xl border border-neutral-300 px-4 py-3 text-center text-sm font-medium">
+                  {uploadingLogo ? "Đang upload logo..." : "Chọn file logo"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    className="hidden"
+                    disabled={uploadingLogo || saving}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      void uploadHeaderLogo(file);
+                    }}
+                  />
+                </label>
+              ) : null}
+
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium">
+                  Kích thước logo
+                </span>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={40}
+                    max={420}
+                    step={2}
+                    disabled={!canEdit || saving || uploadingLogo}
+                    value={Number(navSettings.headerLogoWidth || 118)}
+                    onChange={(e) =>
+                      patchSettings({
+                        headerLogoWidth: Number(e.target.value),
+                      })
+                    }
+                    className="w-full"
+                  />
+                  <input
+                    type="number"
+                    min={40}
+                    max={420}
+                    disabled={!canEdit || saving || uploadingLogo}
+                    value={Number(navSettings.headerLogoWidth || 118)}
+                    onChange={(e) =>
+                      patchSettings({
+                        headerLogoWidth: Math.max(
+                          40,
+                          Math.min(420, Number(e.target.value || 118)),
+                        ),
+                      })
+                    }
+                    className="w-20 rounded-lg border px-2 py-2 text-sm"
+                  />
+                  <span className="text-xs text-neutral-500">px</span>
+                </div>
+              </label>
+
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium">
+                  Căn logo trong vùng bên trái
+                </span>
+                <select
+                  disabled={!canEdit || saving || uploadingLogo}
+                  value={navSettings.headerLogoAlign || "LEFT"}
+                  onChange={(e) =>
+                    patchSettings({
+                      headerLogoAlign: e.target.value as
+                        | "LEFT"
+                        | "CENTER"
+                        | "RIGHT",
+                    })
+                  }
+                  className="w-full rounded-xl border border-neutral-300 px-3 py-2.5"
+                >
+                  <option value="LEFT">Căn trái</option>
+                  <option value="CENTER">Căn giữa</option>
+                  <option value="RIGHT">Căn phải</option>
+                </select>
+              </label>
+
+              {navSettings.headerLogoUrl && canEdit ? (
+                <button
+                  type="button"
+                  disabled={saving || uploadingLogo}
+                  onClick={() => patchSettings({ headerLogoUrl: "" })}
+                  className="text-sm font-medium text-red-600 underline"
+                >
+                  Xóa logo upload, dùng lại chữ THE 1970
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </section>
 
         <section className="rounded-2xl border border-neutral-200 bg-white p-5">
           <h2 className="text-lg font-semibold">Màu nền chung website</h2>

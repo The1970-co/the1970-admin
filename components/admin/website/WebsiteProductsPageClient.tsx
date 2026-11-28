@@ -16,6 +16,8 @@ import {
   type WebsiteNavigationConfig,
 } from "@/lib/website-navigation-api";
 
+import { collectionGroups } from "@/lib/website-collection-tree";
+
 type MasterProduct = {
   id: string;
   name?: string;
@@ -86,6 +88,16 @@ const emptyForm = (): FormState => ({
   coverImageUrl: "",
   images: [],
 });
+
+function websiteTitleFromMaster(name: string) {
+  return name.normalize("NFC").trim().replace(/[^\s–—]+/gu, (token) => {
+    // Preserve codes like AKD905, QKK966, SM970-B and 100%.
+    if (/\p{L}/u.test(token) && /\d/u.test(token)) return token;
+    return token.toLocaleLowerCase("vi-VN").replace(/(^|[-/])([^\p{L}]*)(\p{L})/gu,
+      (_, prefix: string, punctuation: string, letter: string) =>
+        prefix + punctuation + letter.toLocaleUpperCase("vi-VN"));
+  });
+}
 
 function slugify(input: string) {
   return input
@@ -235,17 +247,9 @@ export default function WebsiteProductsPageClient() {
   const [masterResults, setMasterResults] = useState<MasterProduct[]>([]);
   const [searchingMaster, setSearchingMaster] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-  const [websiteNav, setWebsiteNav] = useState<WebsiteNavigationConfig>({ version: 2, settings: {
-  menuFontFamily: "SERIF",
-  menuFontSize: 12,
-  menuGap: 28,
-  megaMenuHeightVh: 48,
-  megaOverlayOpacity: 0.28,
-  headerSticky: true,
-  announcementEnabled: true,
-  announcementTextVi: "THE 1970 — EST. 2015",
-  announcementLink: "",
-}, items: [] });
+  const [websiteNav, setWebsiteNav] = useState<WebsiteNavigationConfig | null>(null);
+  const [navLoading, setNavLoading] = useState(false);
+  const [navError, setNavError] = useState("");
 
   async function load() {
     try {
@@ -265,39 +269,24 @@ export default function WebsiteProductsPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function reloadWebsiteNavigation() {
+    setNavLoading(true);
+    setNavError("");
+    try {
+      const row = await getWebsiteNavigation("VN");
+      const config = row?.draftConfig || row?.publishedConfig || row;
+      if (!Array.isArray(config?.items)) throw new Error("Không nhận được danh sách menu.");
+      setWebsiteNav(config as WebsiteNavigationConfig);
+    } catch (e) {
+      setNavError(e instanceof Error ? e.message : "Không tải được menu website.");
+    } finally {
+      setNavLoading(false);
+    }
+  }
+
   useEffect(() => {
-    void getWebsiteNavigation("VN")
-      .then((row: any) => {
-        setWebsiteNav(
-          (row?.draftConfig ||
-            row?.publishedConfig ||
-            { version: 2, settings: {
-  menuFontFamily: "SERIF",
-  menuFontSize: 12,
-  menuGap: 28,
-  megaMenuHeightVh: 48,
-  megaOverlayOpacity: 0.28,
-  headerSticky: true,
-  announcementEnabled: true,
-  announcementTextVi: "THE 1970 — EST. 2015",
-  announcementLink: "",
-}, items: [] }) as WebsiteNavigationConfig,
-        );
-      })
-      .catch(() => {
-        setWebsiteNav({ version: 2, settings: {
-  menuFontFamily: "SERIF",
-  menuFontSize: 12,
-  menuGap: 28,
-  megaMenuHeightVh: 48,
-  megaOverlayOpacity: 0.28,
-  headerSticky: true,
-  announcementEnabled: true,
-  announcementTextVi: "THE 1970 — EST. 2015",
-  announcementLink: "",
-}, items: [] });
-      });
-  }, []);
+    if (editorOpen) void reloadWebsiteNavigation();
+  }, [editorOpen]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 350);
@@ -343,7 +332,7 @@ export default function WebsiteProductsPageClient() {
       id: row.id,
       productId: row.productId,
       master: row.product,
-      titleVi: row.titleVi || row.product?.name || "",
+      titleVi: row.titleVi || websiteTitleFromMaster(row.product?.name || ""),
       slug: row.slug || "",
       shortDescriptionVi: row.shortDescriptionVi || "",
       descriptionVi: row.descriptionVi || "",
@@ -360,7 +349,7 @@ export default function WebsiteProductsPageClient() {
   }
 
   function chooseMaster(p: MasterProduct) {
-    const title = p.name || "";
+    const title = websiteTitleFromMaster(p.name || "");
     setForm((old) => ({
       ...old,
       productId: p.id,
@@ -536,38 +525,17 @@ export default function WebsiteProductsPageClient() {
     });
   }, [groupedRows]);
 
-  const websiteCategoryOptions = useMemo(() => {
-    const options: Array<{ slug: string; label: string }> = [];
-    const seen = new Set<string>();
+  const websiteCategoryGroups = useMemo(() => collectionGroups(websiteNav), [websiteNav]);
+  const knownCategorySlugs = useMemo(() => new Set(websiteCategoryGroups.flatMap(group => [
+    ...(group.parent ? [group.parent.slug] : []), ...group.children.map(child => child.slug),
+  ])), [websiteCategoryGroups]);
+  const oldCategorySlugs = form.websiteCategorySlugs.filter(slug => !knownCategorySlugs.has(slug));
 
-    for (const item of websiteNav.items || []) {
-      if (!item.enabled) continue;
-
-      const links = [
-        { label: item.labelVi, link: item.link },
-        ...(item.columns || []).flatMap((column) =>
-          (column.links || [])
-            .filter((link) => link.enabled)
-            .map((link) => ({ label: link.labelVi, link: link.link })),
-        ),
-      ];
-
-      for (const entry of links) {
-        const rawLink = String(entry.link || "");
-        if (!rawLink.startsWith("/collections/")) continue;
-        const slug = rawLink
-          .replace("/collections/", "")
-          .split(/[?#]/)[0]
-          .replace(/^\/+|\/+$/g, "")
-          .trim();
-        if (!slug || slug === "all" || seen.has(slug)) continue;
-        seen.add(slug);
-        options.push({ slug, label: entry.label || slug });
-      }
-    }
-
-    return options;
-  }, [websiteNav]);
+  function toggleWebsiteCategory(slug: string, checked: boolean) {
+    setForm(old => ({ ...old, websiteCategorySlugs: checked
+      ? Array.from(new Set([...old.websiteCategorySlugs, slug]))
+      : old.websiteCategorySlugs.filter(value => value !== slug) }));
+  }
 
   return (
     <div className="min-h-screen bg-[#f6f6f4]">
@@ -949,57 +917,47 @@ export default function WebsiteProductsPageClient() {
                     </label>
 
                     <div>
-                      <div className="mb-2 text-sm font-medium text-zinc-700">Danh mục trên website</div>
-                      {websiteCategoryOptions.length ? (
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          {websiteCategoryOptions.map((option) => {
-                            const checked = form.websiteCategorySlugs.includes(option.slug);
-                            return (
-                              <label
-                                key={option.slug}
-                                className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 transition ${
-                                  checked
-                                    ? "border-zinc-950 bg-zinc-950 text-white"
-                                    : "border-zinc-200 bg-white text-zinc-800 hover:border-zinc-400"
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(e) => {
-                                    setField(
-                                      "websiteCategorySlugs",
-                                      e.target.checked
-                                        ? Array.from(
-                                            new Set([
-                                              ...form.websiteCategorySlugs,
-                                              option.slug,
-                                            ]),
-                                          )
-                                        : form.websiteCategorySlugs.filter(
-                                            (value) => value !== option.slug,
-                                          ),
-                                    );
-                                  }}
-                                  className="h-4 w-4 accent-zinc-950"
-                                />
-                                <span className="text-sm font-medium">{option.label}</span>
-                                <span
-                                  className={`ml-auto text-[11px] ${
-                                    checked ? "text-white/60" : "text-zinc-400"
-                                  }`}
-                                >
-                                  /collections/{option.slug}
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                          Chưa tìm thấy danh mục website từ Menu website. Hãy tạo link dạng /collections/ten-danh-muc rồi lưu menu.
-                        </div>
-                      )}
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-sm font-medium text-zinc-700">Danh mục trên website</div>
+                        <button type="button" disabled={navLoading} onClick={() => void reloadWebsiteNavigation()} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs hover:bg-zinc-50 disabled:opacity-50">
+                          {navLoading ? "Đang tải..." : "Làm mới menu"}
+                        </button>
+                      </div>
+                      <p className="mb-3 text-xs leading-relaxed text-zinc-500">Chọn menu chính hoặc nhiều menu con. Sản phẩm thuộc menu con cũng xuất hiện trong danh mục chính sau khi menu được xuất bản. Danh sách lấy từ Menu website, không tạo danh mục riêng.</p>
+                      {navError ? <p className="mb-2 text-sm text-red-700">{navError}</p> : null}
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {websiteCategoryGroups.map(group => {
+                          const inherited = group.children.some(child => form.websiteCategorySlugs.includes(child.slug));
+                          return (
+                            <div key={group.id} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                              {group.parent ? (() => {
+                                const option = group.parent;
+                                const checked = form.websiteCategorySlugs.includes(option.slug);
+                                return <label className={`flex cursor-pointer items-center gap-2 px-3 py-3 ${checked ? "bg-zinc-950 text-white" : "bg-zinc-50 text-zinc-900"}`}>
+                                  <input type="checkbox" checked={checked} onChange={e => toggleWebsiteCategory(option.slug, e.target.checked)} className="h-4 w-4 shrink-0 accent-zinc-950" />
+                                  <div className="min-w-0 flex-1"><div className="text-sm font-semibold">{group.label}</div><div className={`break-all text-[11px] ${checked ? "text-white/60" : "text-zinc-500"}`}>/collections/{option.slug}</div></div>
+                                  {inherited && !checked ? <span className="max-w-24 text-right text-[10px] text-zinc-500">Có SP từ menu con</span> : null}
+                                </label>;
+                              })() : <div className="bg-zinc-50 px-3 py-3 text-sm font-semibold">{group.label}</div>}
+                              {group.children.length ? <div className="space-y-1 p-2">
+                                {group.children.map(option => {
+                                  const checked = form.websiteCategorySlugs.includes(option.slug);
+                                  return <label key={option.slug} className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 ${checked ? "bg-zinc-950 text-white" : "text-zinc-700 hover:bg-zinc-100"}`}>
+                                    <input type="checkbox" checked={checked} onChange={e => toggleWebsiteCategory(option.slug, e.target.checked)} className="h-4 w-4 shrink-0 accent-zinc-950" />
+                                    <span className="min-w-0"><span className="block text-sm">↳ {option.label}</span><span className={`block break-all text-[11px] ${checked ? "text-white/60" : "text-zinc-400"}`}>/collections/{option.slug}</span></span>
+                                  </label>;
+                                })}
+                              </div> : <p className="px-3 py-2 text-xs text-zinc-400">Chưa có danh mục con riêng.</p>}
+                              {group.ignored.length ? <p className="border-t border-zinc-100 px-3 py-2 text-[11px] text-zinc-500">Link trùng hoặc chưa có URL danh mục riêng: {group.ignored.join(", ")}. Chỉnh trong Menu website.</p> : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {!navLoading && !websiteCategoryGroups.length && !navError ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Chưa có danh mục website. Tạo link /collections/ten-danh-muc trong Menu website.</div> : null}
+                      {!navLoading && !navError && oldCategorySlugs.length ? <div className="mt-3 rounded-xl border border-zinc-200 p-3 text-xs text-zinc-600">
+                        <div className="mb-2 font-medium">Danh mục đã lưu nhưng không còn trong menu (giữ nguyên nếu không bỏ chọn)</div>
+                        {oldCategorySlugs.map(slug => <label key={slug} className="flex items-center gap-2 py-1"><input type="checkbox" checked onChange={e => toggleWebsiteCategory(slug, e.target.checked)} /> /collections/{slug}</label>)}
+                      </div> : null}
                     </div>
 
                     <label>
