@@ -8,6 +8,9 @@ import {
 } from "@/lib/website-homepage-api";
 import { uploadWebsiteImage } from "@/lib/website-products-api";
 import { useAuth } from "@/components/admin/auth/AuthProvider";
+import ProductDetailLayoutSettings from "./ProductDetailLayoutSettings";
+import type { ProductDetailConfig } from "@/lib/product-detail-layout";
+type HomepageWithDetail = HomepageConfig & { productDetailConfig?: ProductDetailConfig };
 
 
 // Decorative Unicode letters are characters, not CSS fonts.
@@ -106,8 +109,9 @@ export default function WebsiteHomepagePageClient(){
   const canDelete = can("website.delete");
   const canPublish = can("website.publish");
   const canUpload = can("website.image.upload");
-  const [config,setConfig]=useState<HomepageConfig>({version:1,blocks:[]});
+  const [config,setConfig]=useState<HomepageWithDetail>({version:1,blocks:[]});
   const [selectedId,setSelectedId]=useState("");
+  const [detailSettingsOpen,setDetailSettingsOpen]=useState(false);
   const [loading,setLoading]=useState(true);
   const [saving,setSaving]=useState(false);
   const [publishing,setPublishing]=useState(false);
@@ -173,7 +177,7 @@ export default function WebsiteHomepagePageClient(){
     try{
       setLoading(true);setError("");
       const row=await getHomepageAdmin("VN");
-      const next=(row?.draftConfig||row?.publishedConfig||{version:1,blocks:[]}) as HomepageConfig;
+      const next=(row?.draftConfig||row?.publishedConfig||{version:1,blocks:[]}) as HomepageWithDetail;
       setConfig(next);setSelectedId(next.blocks?.[0]?.id||"");
     }catch(e){setError(e instanceof Error?e.message:"Không tải được homepage.");}
     finally{setLoading(false);}
@@ -369,6 +373,7 @@ export default function WebsiteHomepagePageClient(){
     <div className="sticky top-0 z-30 flex items-center justify-between border-b bg-white px-6 py-4">
       <div><div className="text-xs font-semibold uppercase tracking-[.18em] text-neutral-400">Website / Trang chủ</div><h1 className="mt-1 text-xl font-semibold">Bố cục homepage</h1></div>
       <div className="flex gap-2">
+        <button type="button" onClick={()=>setDetailSettingsOpen(v=>!v)} className="rounded-xl border px-4 py-2.5 text-sm font-semibold">{detailSettingsOpen?"Quay lại homepage":"Chi tiết sản phẩm"}</button>
         <button
           type="button"
           onClick={()=>{setPreviewReady(false);setPreviewOpen(true);}}
@@ -383,7 +388,8 @@ export default function WebsiteHomepagePageClient(){
 
     {error?<div className="m-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>:null}
 
-    <div className="grid min-h-[calc(100vh-78px)] grid-cols-[330px_minmax(0,1fr)]">
+    {detailSettingsOpen?<div className="p-6"><ProductDetailLayoutSettings value={config.productDetailConfig} disabled={!canEdit||saving||publishing} onChange={value=>setConfig(old=>({...old,productDetailConfig:value}))}/></div>:null}
+    <div hidden={detailSettingsOpen} className="grid min-h-[calc(100vh-78px)] grid-cols-[330px_minmax(0,1fr)]" style={detailSettingsOpen?{display:"none"}:undefined}>
       <aside className="border-r bg-white p-4">
         <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-400">Các block</div>
         <div className="space-y-2">
